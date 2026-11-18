@@ -1,0 +1,18 @@
+.env
+*.log
+logs/
+archive/
+input/*.xlsx
+input/*.xls
+input/*.csv
+sku_cache.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local operational notes — contains store-specific identifiers
+OPERATIONS.md
+
+# Claude Code local settings (permission allowlist — not useful to other devs)
+.claude/
