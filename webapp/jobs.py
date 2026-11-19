@@ -58,9 +58,13 @@ class JobRunner:
             }
             self._current = job_id
 
+        call_kwargs = dict(kwargs)
+        if run_id is not None:
+            call_kwargs["run_id"] = run_id
+
         def _wrapper() -> None:
             try:
-                fn(progress_cb=self._progress_cb(job_id), **kwargs)
+                fn(progress_cb=self._progress_cb(job_id), **call_kwargs)
                 self._finish(job_id, "succeeded")
             except Exception as e:  # noqa: BLE001 — surface anything to the UI
                 log.exception("Job %s (%s) failed", job_id, kind)
