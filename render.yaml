@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: hvac-inventory
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      # Secrets — set in the Render dashboard, don't commit:
+      - key: SHOPIFY_STORE_DOMAIN
+        sync: false
+      - key: SHOPIFY_ACCESS_TOKEN
+        sync: false
+      - key: SHOPIFY_LOCATION_ID
+        sync: false
+      # Optional overrides (keep CLI behavior stable):
+      - key: SHOPIFY_API_VERSION
+        value: "2026-10"
+      - key: EXCEL_SKU_COLUMN
+        value: SKU
+      - key: EXCEL_QTY_COLUMN
+        value: Quantity
+      - key: EXCEL_TITLE_COLUMN
+        value: Title

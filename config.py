@@ -58,7 +58,14 @@ def load_config() -> Config:
     )
 
 
-INPUT_DIR = PROJECT_ROOT / "input"
-ARCHIVE_DIR = PROJECT_ROOT / "archive"
-LOGS_DIR = PROJECT_ROOT / "logs"
-SKU_CACHE_FILE = PROJECT_ROOT / "sku_cache.json"
+_data_dir_env = os.environ.get("DATA_DIR", "").strip()
+DATA_DIR = Path(_data_dir_env).resolve() if _data_dir_env else PROJECT_ROOT
+
+INPUT_DIR = DATA_DIR / "input"
+ARCHIVE_DIR = DATA_DIR / "archive"
+LOGS_DIR = DATA_DIR / "logs"
+SKU_CACHE_FILE = DATA_DIR / "sku_cache.json"
+
+UPLOADS_DIR = DATA_DIR / "uploads"
+RUNS_DIR = DATA_DIR / "runs"
+HISTORY_DB = DATA_DIR / "history.sqlite"

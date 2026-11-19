@@ -16,3 +16,15 @@ OPERATIONS.md
 
 # Claude Code local settings (permission allowlist — not useful to other devs)
 .claude/
+
+# Web app runtime data (also lives under DATA_DIR in production)
+uploads/
+runs/
+history.sqlite
+history.sqlite-wal
+history.sqlite-shm
+
+# Frontend build + dev artifacts
+node_modules/
+frontend/dist/
+dev-data/

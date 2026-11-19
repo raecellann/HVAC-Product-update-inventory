@@ -15,6 +15,7 @@ import json
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -179,6 +180,44 @@ def build_shopify_qty_map(rows: list[dict]) -> dict[str, int]:
     return out
 
 
+@dataclass
+class CompareRow:
+    sku: str
+    shopify_title: str
+    excel_qty: int
+    shopify_qty: int | None  # None when the SKU was not returned by the bulk query
+    diff: int | None         # excel_qty - shopify_qty; None when shopify_qty is None
+    state: str               # "match" | "differ" | "no_shopify_data"
+
+
+def compare_quantities(
+    matched_skus: set[str],
+    excel_qtys: dict[str, int],
+    sku_map: dict[str, dict],
+    shopify_qtys: dict[str, int],
+) -> list[CompareRow]:
+    """Per-SKU comparison. Pure function — no CSV, no logging.
+
+    Iterates in sorted SKU order to keep deterministic output (matches the
+    previous CSV row ordering).
+    """
+    out: list[CompareRow] = []
+    for sku in sorted(matched_skus):
+        excel_q = excel_qtys[sku]
+        hit = sku_map.get(sku, {})
+        title = hit.get("title", "")
+        if sku not in shopify_qtys:
+            out.append(CompareRow(sku, title, excel_q, None, None, "no_shopify_data"))
+            continue
+        sh_q = shopify_qtys[sku]
+        diff = excel_q - sh_q
+        out.append(CompareRow(
+            sku, title, excel_q, sh_q, diff,
+            "match" if diff == 0 else "differ",
+        ))
+    return out
+
+
 def main() -> int:
     LOGS_DIR.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -222,32 +261,27 @@ def main() -> int:
     log.info("Pulled Shopify stock for %d SKUs", len(shopify_qtys))
 
     # Compare
-    same = 0
-    differ = 0
-    no_shopify_data = 0
-    diffs: list[tuple[str, int, int, int]] = []  # (sku, excel, shopify, diff)
-    biggest_diffs: list[tuple[str, int, int, int]] = []
+    compare_rows = compare_quantities(matched_skus, excel_qtys, sku_map, shopify_qtys)
+
+    same = sum(1 for r in compare_rows if r.state == "match")
+    differ = sum(1 for r in compare_rows if r.state == "differ")
+    no_shopify_data = sum(1 for r in compare_rows if r.state == "no_shopify_data")
+    diffs: list[tuple[str, int, int, int]] = [
+        (r.sku, r.excel_qty, r.shopify_qty, r.diff)
+        for r in compare_rows if r.state == "differ"
+    ]
 
     with csv_file.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["sku", "shopify_title", "excel_qty", "shopify_qty", "diff_excel_minus_shopify", "match"])
-        for sku in sorted(matched_skus):
-            excel_q = excel_qtys[sku]
-            if sku not in shopify_qtys:
-                no_shopify_data += 1
-                hit = sku_map[sku]
-                w.writerow([sku, hit.get("title", ""), excel_q, "", "", "NO_SHOPIFY_DATA"])
-                continue
-            sh_q = shopify_qtys[sku]
-            diff = excel_q - sh_q
-            match = "YES" if diff == 0 else "NO"
-            if diff == 0:
-                same += 1
+        for r in compare_rows:
+            if r.state == "no_shopify_data":
+                w.writerow([r.sku, r.shopify_title, r.excel_qty, "", "", "NO_SHOPIFY_DATA"])
             else:
-                differ += 1
-                diffs.append((sku, excel_q, sh_q, diff))
-            hit = sku_map[sku]
-            w.writerow([sku, hit.get("title", ""), excel_q, sh_q, diff, match])
+                w.writerow([
+                    r.sku, r.shopify_title, r.excel_qty, r.shopify_qty, r.diff,
+                    "YES" if r.state == "match" else "NO",
+                ])
 
     diffs.sort(key=lambda x: abs(x[3]), reverse=True)
     biggest_diffs = diffs[:20]

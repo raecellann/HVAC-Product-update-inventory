@@ -15,10 +15,11 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 import requests
 
-from config import SKU_CACHE_FILE, load_config
+from config import SKU_CACHE_FILE, Config, load_config
 from shopify_client import ShopifyClient
 
 logging.basicConfig(
@@ -165,25 +166,43 @@ def build_cache(rows: list[dict]) -> dict:
     }
 
 
-def main() -> int:
-    cfg = load_config()
+def run_cache_refresh(
+    cfg: Config,
+    progress_cb: Callable[[str], None] | None = None,
+    logger: logging.Logger | None = None,
+) -> dict:
+    """Full refresh flow: bulk query → poll → download → write sku_cache.json.
+
+    Returns the cache dict that was written. progress_cb is called with
+    short status strings so the web layer can display them live.
+    """
+    logger = logger or log
     client = ShopifyClient(cfg)
 
-    # If a prior bulk op is running, we must wait before starting a new one.
+    if progress_cb:
+        progress_cb("Starting bulk query")
+
     try:
         start_bulk_query(client)
     except Exception as e:
         if "already in progress" in str(e).lower():
-            log.warning("A bulk op is already running; waiting for it instead.")
+            logger.warning("A bulk op is already running; waiting for it instead.")
         else:
             raise
 
+    if progress_cb:
+        progress_cb("Waiting for Shopify bulk operation to finish")
+
     url = wait_for_bulk(client)
+
+    if progress_cb:
+        progress_cb("Downloading results")
+
     rows = download_jsonl(url)
     cache = build_cache(rows)
 
     Path(SKU_CACHE_FILE).write_text(json.dumps(cache, indent=2), encoding="utf-8")
-    log.info(
+    logger.info(
         "Wrote %s: %d unique SKUs, %d duplicate SKUs, %d blank, %d untracked",
         SKU_CACHE_FILE.name,
         len(cache["skus"]),
@@ -192,11 +211,17 @@ def main() -> int:
         cache["untracked_count"],
     )
     if cache["duplicate_skus"]:
-        log.warning(
+        logger.warning(
             "%d SKUs are assigned to multiple variants and were SKIPPED. "
             "Fix them in Shopify then re-run this script.",
             len(cache["duplicate_skus"]),
         )
+    return cache
+
+
+def main() -> int:
+    cfg = load_config()
+    run_cache_refresh(cfg)
     return 0
 
 

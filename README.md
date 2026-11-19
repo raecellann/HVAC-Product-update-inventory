@@ -247,6 +247,104 @@ Each run writes to `logs/`:
 
 ---
 
+## 🌐 Web App (for non-technical users)
+
+The same inventory sync is available as a small web app so the client can run
+it from a browser. The CLI workflow above is unchanged — the web app reuses
+the same Python modules under the hood.
+
+Architecture:
+- **Backend**: FastAPI, serves only JSON + static files.
+- **Frontend**: plain HTML / CSS / vanilla JS, built with Vite. No React.
+  One HTML file per page: `index`, `preview`, `history`, `run`.
+- **One Render service**: Dockerfile builds the frontend with Node, then
+  runs FastAPI with Python. Both are protected by the same access-key check.
+
+### What the client does
+
+1. Opens the site.
+2. Clicks **Refresh product list** once (and thereafter whenever Shopify
+   products are added — the app warns if it's been more than 7 days).
+3. Uploads today's `.xlsx` file.
+4. Reviews the preview: counts, warnings, and a searchable before/after table.
+5. Clicks **Update Shopify** to apply the changes.
+6. Can see any run on **Latest changes** for 90 days.
+
+### Local dev
+
+Requirements: Python 3.11+ and Node 20+.
+
+```powershell
+# One-time
+pip install -r requirements.txt
+npm install
+
+# Seed fake data so the UI works without Shopify:
+npm run seed
+
+# Start Vite (hot reload) and FastAPI together:
+npm run dev
+```
+
+The command prints the exact URL to open, including the dev access key.
+Vite runs on `127.0.0.1:5173` and proxies `/api`, `/download`, `/healthz`
+through to FastAPI on `127.0.0.1:8001`.
+
+In dev:
+- `ACCESS_KEY` defaults to `dev-key` if unset. Never on Render.
+- `DISABLE_APPLY=true`. The "Update Shopify" button still shows; the server
+  refuses with "Apply is disabled in dev mode". Lets you exercise the UI
+  without risk.
+- Data lives in `./dev-data/` (gitignored).
+
+### Environment
+
+| Var | Purpose |
+|---|---|
+| `DATA_DIR`     | Where uploads, run history, and `sku_cache.json` live. Defaults to the project folder for the CLI; on Render set it to `/var/data`. |
+| `DISABLE_APPLY`| `true` to make the apply endpoint refuse. Set automatically by `npm run dev`. |
+
+The CLI's existing `SHOPIFY_*` vars still apply.
+
+### Production build
+
+```powershell
+npm run build   # → frontend/dist
+```
+
+FastAPI serves everything from `frontend/dist` when it exists.
+
+### Deploy to Render
+
+The repo ships a Docker blueprint (`render.yaml` + `Dockerfile`):
+
+1. On Render, create a **Blueprint** service pointing at this repo.
+2. In the dashboard, set the three Shopify secrets: `SHOPIFY_STORE_DOMAIN`,
+   `SHOPIFY_ACCESS_TOKEN`, `SHOPIFY_LOCATION_ID`.
+3. Deploy. The multi-stage `Dockerfile` builds the frontend with Node, then
+   copies `frontend/dist` into the Python image. A 1 GB persistent disk is
+   mounted at `/var/data`.
+
+> **Why Docker, not the native Python runtime?** Render's native Python
+> runtime does not include Node, and installing it in `buildCommand` is
+> fragile (no root). Docker handles both languages cleanly.
+
+### Safety behaviors
+
+- Preview never writes to Shopify. Apply always runs in absolute-quantity
+  mode regardless of `.env`, so re-uploading the same file is idempotent.
+- Only one job (preview / apply / cache refresh) runs at a time — anything
+  else gets a 409.
+- A preview can only be applied **once, within 24 hours**. After that the
+  Shopify quantities in the preview are considered stale and the user is
+  asked to re-upload.
+- If the server is restarted mid-job, that run is marked `interrupted` on
+  next boot.
+- Run-summary rows are kept forever; the large per-run detail files
+  (uploaded Excel + preview JSON) are auto-pruned after 90 days.
+
+---
+
 ## License
 
 MIT. Use at your own risk — test with `DRY_RUN=true` before production.

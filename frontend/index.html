@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Dashboard — HVAC Inventory</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a href="/" class="brand">HVAC Inventory</a>
+      <nav>
+        <a href="/">Dashboard</a>
+        <a href="/history.html">Latest changes</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    <div id="dev-banner" class="alert warn hidden">
+      Dev mode: Update Shopify is disabled on the server.
+    </div>
+
+    <section class="card">
+      <h2>Update inventory</h2>
+      <p>Upload today's stock Excel file. The site will show you what will change before anything is sent to Shopify.</p>
+
+      <div id="busy-banner" class="alert warn hidden">
+        A job is currently running. Please wait for it to finish.
+      </div>
+
+      <form id="upload-form" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".xlsx,.xlsm" required>
+        <button type="submit" id="upload-btn">Upload and preview</button>
+      </form>
+      <div id="upload-status" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>Product list</h2>
+      <div id="cache-info">Loading…</div>
+      <button id="refresh-cache-btn">Refresh product list</button>
+      <div id="cache-status" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>Latest changes</h2>
+      <div id="runs-list">Loading…</div>
+      <p><a href="/history.html">See all runs →</a></p>
+    </section>
+  </main>
+  <script type="module" src="/src/dashboard.js"></script>
+</body>
+</html>
