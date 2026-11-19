@@ -18,7 +18,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY config.py shopify_client.py update_inventory.py compare_inventory.py build_sku_cache.py ./
+COPY config.py shopify_client.py update_inventory.py update_prices.py compare_inventory.py build_sku_cache.py ./
 COPY webapp ./webapp
 COPY --from=web-build /app/frontend/dist ./frontend/dist
 
