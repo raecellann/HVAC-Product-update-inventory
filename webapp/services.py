@@ -11,6 +11,7 @@ import json
 import logging
 import shutil
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Callable
 
@@ -21,6 +22,15 @@ from update_inventory import (
     push_batches,
     read_excel,
     load_sku_cache,
+)
+from update_prices import (
+    build_shopify_price_map,
+    download_jsonl as price_download_jsonl,
+    match_price_rows,
+    push_price_batches,
+    read_price_excel,
+    start_price_bulk_query,
+    wait_for_bulk as price_wait_for_bulk,
 )
 import compare_inventory as cmp_mod
 import build_sku_cache as cache_mod
@@ -215,6 +225,168 @@ def apply_job(
         raise
 
 
+# ------------------------------------------------------------- price preview
+
+
+def preview_prices_job(
+    *,
+    run_id: int,
+    upload_path: Path,
+    cfg: Config,
+    client_factory: ClientFactory = _default_factory,
+    progress_cb: Callable[..., None] | None = None,
+) -> None:
+    """Read SKU+Price Excel → match → fetch current Shopify prices → write preview."""
+    progress = progress_cb or (lambda *a, **k: None)
+    history.set_status(run_id, "running")
+
+    try:
+        progress(0, 0, "Reading Excel")
+        rows = read_price_excel(upload_path, cfg.sku_column, cfg.price_column)
+
+        progress(0, 0, "Loading product list")
+        cache = load_sku_cache()
+        sku_map: dict[str, dict] = cache["skus"]
+
+        progress(0, 0, "Matching SKUs")
+        match = match_price_rows(rows, cache)
+
+        progress(0, 0, "Fetching current Shopify prices (this takes a minute)")
+        client = client_factory(cfg)
+        start_price_bulk_query(client)
+        url = price_wait_for_bulk(client)
+        bulk_rows = price_download_jsonl(url)
+        price_info = build_shopify_price_map(bulk_rows)
+
+        progress(0, 0, "Building preview")
+        preview_rows: list[dict] = []
+        will_change = 0
+        for m in match.matched:
+            sku_lc = m["sku"].lower()
+            cache_hit = sku_map.get(sku_lc, {})
+            title = cache_hit.get("title", "")
+            info = price_info.get(sku_lc) or {}
+            current = info.get("price")
+            new = m["new_price"]
+            diff = None
+            if current is not None:
+                try:
+                    diff = float(Decimal(new) - Decimal(current))
+                except (InvalidOperation, ValueError, TypeError):
+                    diff = None
+            if diff is not None and diff != 0:
+                will_change += 1
+            preview_rows.append({
+                "sku": m["sku"],
+                "title": title,
+                "image_url": info.get("image_url") or cache_hit.get("image_url"),
+                "shopify_price": current,
+                "new_price": new,
+                "diff": diff,
+                "product_id": info.get("product_id"),
+                "variant_id": m["variant_id"],
+            })
+
+        d = run_dir(run_id)
+        (d / "preview.json").write_text(json.dumps(preview_rows), encoding="utf-8")
+        _write_price_problems_csv(d / "problems.csv", match)
+
+        counts = {
+            "excel_rows": len(rows),
+            "matched": len(match.matched),
+            "will_change": will_change,
+            "unmatched": len(match.unmatched),
+            "bad_price": len(match.bad_price),
+            "duplicate": len(match.duplicate_hits),
+        }
+
+        history.record_counts(run_id, counts)
+        history.set_status(run_id, "succeeded")
+        progress(0, 0, "Preview ready")
+
+    except Exception as e:  # noqa: BLE001
+        log.exception("preview_prices_job failed")
+        history.set_status(run_id, "failed", error=str(e))
+        raise
+
+
+# -------------------------------------------------------------- price apply
+
+
+def apply_prices_job(
+    *,
+    run_id: int,
+    preview_run_id: int,
+    cfg: Config,
+    client_factory: ClientFactory = _default_factory,
+    progress_cb: Callable[..., None] | None = None,
+) -> None:
+    """Rebuild batch from preview rows, push prices to Shopify."""
+    progress = progress_cb or (lambda *a, **k: None)
+    history.set_status(run_id, "running")
+    try:
+        preview_run = history.get_run(preview_run_id)
+        if preview_run is None:
+            raise RuntimeError("Preview not found")
+        d = RUNS_DIR / str(preview_run_id)
+        preview_path = d / "preview.json"
+        upload_path = d / "upload.xlsx"
+        if not preview_path.exists():
+            raise RuntimeError("Preview details are no longer available")
+
+        preview_rows = json.loads(preview_path.read_text(encoding="utf-8"))
+
+        matched: list[dict] = []
+        for r in preview_rows:
+            if not r.get("variant_id") or not r.get("product_id"):
+                continue  # need both for the bulk update
+            matched.append({
+                "sku": r["sku"],
+                "variant_id": r["variant_id"],
+                "product_id": r["product_id"],
+                "new_price": r["new_price"],
+            })
+
+        cfg_apply = dataclasses.replace(cfg, dry_run=False)
+        client = client_factory(cfg_apply)
+
+        total = len(matched)
+        progress(0, total, "Pushing price updates")
+
+        def _cb(pushed: int, t: int) -> None:
+            progress(pushed, t, f"Pushed {pushed} of {t}")
+
+        result = push_price_batches(client, cfg_apply, matched, progress_cb=_cb, log=log)
+
+        history.record_apply(run_id, result.pushed, len(result.user_errors))
+        history.mark_preview_applied(preview_run_id)
+
+        if upload_path.exists():
+            ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+            archive_name = (
+                preview_run.get("file_name") or f"prices_{preview_run_id}.xlsx"
+            )
+            dest = ARCHIVE_DIR / f"{Path(archive_name).stem}__prices_{stamp}.xlsx"
+            try:
+                shutil.copy2(upload_path, dest)
+            except OSError:
+                log.warning("Could not archive uploaded file to %s", dest)
+
+        if result.user_errors:
+            (run_dir(run_id) / "user_errors.json").write_text(
+                json.dumps(result.user_errors, indent=2), encoding="utf-8"
+            )
+
+        history.set_status(run_id, "succeeded")
+        progress(result.pushed, total, "Done")
+
+    except Exception as e:  # noqa: BLE001
+        log.exception("apply_prices_job failed")
+        history.set_status(run_id, "failed", error=str(e))
+        raise
+
+
 # -------------------------------------------------------------- cache refresh
 
 
@@ -282,3 +454,17 @@ def _write_problems_csv(path: Path, match) -> None:
             w.writerow(["duplicate_sku", r["row"], r["sku"], r["title"], r["qty_raw"], r["reason"]])
         for r in match.untracked_hits:
             w.writerow(["untracked", r["row"], r["sku"], r["title"], r["qty_raw"], r["shopify_title"]])
+
+
+def _write_price_problems_csv(path: Path, match) -> None:
+    if not (match.unmatched or match.bad_price or match.duplicate_hits):
+        return
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["category", "row", "sku", "price_raw", "reason"])
+        for r in match.unmatched:
+            w.writerow(["unmatched", r["row"], r["sku"], r["price_raw"], ""])
+        for r in match.bad_price:
+            w.writerow(["bad_price", r["row"], r["sku"], r["price_raw"], r["reason"]])
+        for r in match.duplicate_hits:
+            w.writerow(["duplicate_sku", r["row"], r["sku"], r["price_raw"], r["reason"]])

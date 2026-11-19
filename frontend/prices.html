@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Update prices — HVAC Inventory</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a href="/" class="brand">HVAC Inventory</a>
+      <nav>
+        <a href="/">Update inventory</a>
+        <a href="/prices.html">Update prices</a>
+        <a href="/history.html">Latest changes</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    <div id="dev-banner" class="alert warn hidden">
+      Dev mode: Update Shopify is disabled on the server.
+    </div>
+
+    <section class="card">
+      <h2>Update prices</h2>
+      <p>Upload an Excel file with SKU and Price columns. The site will show you the old vs. new price before anything is sent to Shopify.</p>
+
+      <div id="busy-banner" class="alert warn hidden">
+        A job is currently running. Please wait for it to finish.
+      </div>
+
+      <form id="upload-form" enctype="multipart/form-data" class="upload-form">
+        <label class="file-picker">
+          <input type="file" name="file" id="file-input" accept=".xlsx,.xlsm" required>
+          <span class="file-picker__btn">Choose file</span>
+          <span class="file-picker__name" id="file-picker-name">No file chosen</span>
+        </label>
+        <button type="submit" id="upload-btn" class="btn btn-primary">Upload and preview</button>
+      </form>
+      <div id="upload-status" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent price runs</h2>
+      <div id="runs-list">Loading…</div>
+    </section>
+  </main>
+  <script type="module" src="/src/prices.js"></script>
+</body>
+</html>

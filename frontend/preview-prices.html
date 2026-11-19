@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Price preview — HVAC Inventory</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a href="/" class="brand">HVAC Inventory</a>
+      <nav>
+        <a href="/">Update inventory</a>
+        <a href="/prices.html">Update prices</a>
+        <a href="/history.html">Latest changes</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="card" id="summary-card">
+      <h2 id="summary-title">Price preview</h2>
+      <p id="summary-when" class="muted"></p>
+
+      <div id="alerts"></div>
+
+      <div id="counts" class="counts"></div>
+
+      <p id="problems-link" class="hidden"><a id="problems-link-a" href="#">Download problem rows as CSV</a></p>
+
+      <div id="apply-box" class="apply-box hidden">
+        <button id="apply-btn">Update Shopify prices</button>
+        <p class="muted">Clicking will push the new prices to Shopify. This cannot be undone.</p>
+      </div>
+      <div id="apply-status" class="status"></div>
+    </section>
+
+    <section class="card hidden" id="table-card">
+      <h2>Prices that will change</h2>
+      <input id="search-input" type="search" placeholder="Search SKU or product name">
+      <table class="preview-table">
+        <thead>
+          <tr><th class="col-img"></th><th>SKU</th><th>Product</th><th class="num">Current</th><th class="num">New</th><th class="num">Change</th></tr>
+        </thead>
+        <tbody id="preview-rows"></tbody>
+      </table>
+      <div id="pagination" class="pagination"></div>
+    </section>
+  </main>
+  <script type="module" src="/src/preview-prices.js"></script>
+</body>
+</html>

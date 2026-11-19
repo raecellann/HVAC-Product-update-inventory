@@ -60,7 +60,7 @@ function renderCounts(run) {
       [c.matched, "matched"],
       [c.will_change, "would change"],
     ];
-    if (run.kind === "apply") {
+    if (run.kind === "apply" || run.kind === "apply_prices") {
       cells.push([run.pushed, "pushed to Shopify"]);
       cells.push([run.user_errors, "errors"]);
     }
@@ -75,7 +75,9 @@ function renderTable(run) {
   if (run.kind === "cache_refresh") return;
 
   // For apply runs, detail lives on the parent preview run.
-  const detailId = run.kind === "apply" && run.parent_run_id ? run.parent_run_id : runId;
+  const isApply = run.kind === "apply" || run.kind === "apply_prices";
+  const detailId = isApply && run.parent_run_id ? run.parent_run_id : runId;
+  const isPriceRun = run.kind === "preview_prices" || run.kind === "apply_prices";
 
   apiGet(`/api/run/${detailId}`).then(detailRun => {
     if (!detailRun.details_available) {
@@ -86,11 +88,28 @@ function renderTable(run) {
       return;
     }
     document.getElementById("table-card").classList.remove("hidden");
-    wireTable(detailId);
+    wireTable(detailId, isPriceRun);
   }).catch(() => {});
 }
 
-function wireTable(detailId) {
+function fmtMoney(v) {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (isNaN(n)) return escapeHtml(String(v));
+  return `$${n.toFixed(2)}`;
+}
+
+function fmtPriceDiff(diff) {
+  if (diff == null) return '<span class="muted">—</span>';
+  const n = Number(diff);
+  if (isNaN(n)) return '<span class="muted">—</span>';
+  if (n === 0) return "0.00";
+  const cls = n > 0 ? "diff-pos" : "diff-neg";
+  const sign = n > 0 ? "+" : "−";
+  return `<span class="${cls}">${sign}$${Math.abs(n).toFixed(2)}</span>`;
+}
+
+function wireTable(detailId, isPriceRun) {
   const tbody = document.getElementById("preview-rows");
   const pagination = document.getElementById("pagination");
   const search = document.getElementById("search-input");
@@ -108,16 +127,21 @@ function wireTable(detailId) {
   }
 
   function render(data) {
-    tbody.innerHTML = data.rows.map(r => `
+    tbody.innerHTML = data.rows.map(r => {
+      const current = isPriceRun ? fmtMoney(r.shopify_price) : (r.shopify_qty == null ? "—" : r.shopify_qty);
+      const next = isPriceRun ? fmtMoney(r.new_price) : r.new_qty;
+      const diff = isPriceRun ? fmtPriceDiff(r.diff) : fmtDiff(r.diff);
+      return `
       <tr>
         <td class="col-img">${renderThumb(r)}</td>
         <td class="sku">${escapeHtml(r.sku)}</td>
         <td>${escapeHtml(r.title || "")}</td>
-        <td class="num">${r.shopify_qty == null ? "—" : r.shopify_qty}</td>
-        <td class="num">${r.new_qty}</td>
-        <td class="num">${fmtDiff(r.diff)}</td>
+        <td class="num">${current}</td>
+        <td class="num">${next}</td>
+        <td class="num">${diff}</td>
       </tr>
-    `).join("");
+    `;
+    }).join("");
     const totalPages = Math.max(1, Math.ceil(data.total / data.per_page));
     pagination.innerHTML = `
       <button ${data.page <= 1 ? "disabled" : ""} data-dir="-1">Prev</button>

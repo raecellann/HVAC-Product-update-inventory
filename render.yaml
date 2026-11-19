@@ -23,8 +23,10 @@ services:
       - key: SHOPIFY_API_VERSION
         value: "2026-10"
       - key: EXCEL_SKU_COLUMN
-        value: SKU
+        value: Item
       - key: EXCEL_QTY_COLUMN
-        value: Quantity
+        value: Qty Available
       - key: EXCEL_TITLE_COLUMN
-        value: Title
+        value: description
+      - key: EXCEL_PRICE_COLUMN
+        value: final_price

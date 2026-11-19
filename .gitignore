@@ -2,9 +2,11 @@
 *.log
 logs/
 archive/
-input/*.xlsx
-input/*.xls
-input/*.csv
+# Excel / CSV data files — never commit client data, regardless of location
+*.xlsx
+*.xlsm
+*.xls
+*.csv
 sku_cache.json
 __pycache__/
 *.pyc

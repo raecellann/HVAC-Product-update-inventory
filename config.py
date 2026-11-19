@@ -30,6 +30,7 @@ class Config:
     sku_column: str
     qty_column: str
     title_column: str
+    price_column: str
     dry_run: bool
 
     @property
@@ -54,6 +55,7 @@ def load_config() -> Config:
         sku_column=os.environ.get("EXCEL_SKU_COLUMN", "SKU").strip(),
         qty_column=os.environ.get("EXCEL_QTY_COLUMN", "Quantity").strip(),
         title_column=os.environ.get("EXCEL_TITLE_COLUMN", "Title").strip(),
+        price_column=os.environ.get("EXCEL_PRICE_COLUMN", "Price").strip(),
         dry_run=os.environ.get("DRY_RUN", "true").strip().lower() in {"1", "true", "yes"},
     )
 

@@ -39,7 +39,13 @@ export function fmtStatus(status) {
 }
 
 export function fmtKind(kind) {
-  const labels = { preview: "Preview", apply: "Applied", cache_refresh: "Product list" };
+  const labels = {
+    preview: "Preview",
+    apply: "Applied",
+    cache_refresh: "Product list",
+    preview_prices: "Price preview",
+    apply_prices: "Prices applied",
+  };
   const label = labels[kind] || kind || "";
   return `<span class="pill pill--kind pill--kind-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
 }
@@ -128,11 +134,19 @@ export function renderRunsTable(runs, mountEl) {
   }
   const rows = runs.map(r => {
     const counts = r.counts || {};
-    const detail = r.kind === "apply"
-      ? `pushed ${r.pushed || 0}${r.user_errors ? `, ${r.user_errors} errors` : ""}`
-      : r.kind === "cache_refresh"
-        ? `${counts.sku_count || 0} products`
-        : `${counts.matched || 0} matched · ${counts.will_change || 0} changes`;
+    let detail;
+    if (r.kind === "apply" || r.kind === "apply_prices") {
+      detail = `pushed ${r.pushed || 0}${r.user_errors ? `, ${r.user_errors} errors` : ""}`;
+    } else if (r.kind === "cache_refresh") {
+      detail = `${counts.sku_count || 0} products`;
+    } else if (r.kind === "preview_prices") {
+      detail = `${counts.matched || 0} matched · ${counts.will_change || 0} price changes`;
+    } else {
+      detail = `${counts.matched || 0} matched · ${counts.will_change || 0} changes`;
+    }
+    const viewHref = r.kind === "preview_prices"
+      ? `/preview-prices.html?id=${r.id}`
+      : `/run.html?id=${r.id}`;
     return `
       <tr>
         <td>
@@ -143,7 +157,7 @@ export function renderRunsTable(runs, mountEl) {
         <td class="file-cell">${escapeHtml(r.file_name || "—")}</td>
         <td>${fmtStatus(r.status)}</td>
         <td>${escapeHtml(detail)}</td>
-        <td class="row-actions"><a class="btn-link" href="/run.html?id=${r.id}">View</a></td>
+        <td class="row-actions"><a class="btn-link" href="${viewHref}">View</a></td>
       </tr>
     `;
   }).join("");

@@ -18,7 +18,7 @@ from ..jobs import JobRunner
 
 router = APIRouter(prefix="/api")
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 APPLY_WINDOW_HOURS = 24
 ALLOWED_SUFFIXES = {".xlsx", ".xlsm"}
 
@@ -105,8 +105,8 @@ async def upload_file(
             if written > MAX_UPLOAD_BYTES:
                 out.close()
                 dest.unlink(missing_ok=True)
-                history.set_status(run_id, "failed", error="File too large (>50 MB).")
-                raise HTTPException(413, "File too large (>50 MB).")
+                history.set_status(run_id, "failed", error="File too large (>100 MB).")
+                raise HTTPException(413, "File too large (>100 MB).")
             out.write(chunk)
 
     job_id = runner.try_start(
@@ -154,6 +154,106 @@ def apply_preview(
     job_id = runner.try_start(
         "apply",
         services.apply_job,
+        run_id=apply_run_id,
+        preview_run_id=preview_run_id,
+        cfg=cfg,
+    )
+    if job_id is None:
+        history.set_status(apply_run_id, "failed", error="Another job started first.")
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    return JSONResponse({"run_id": apply_run_id, "job_id": job_id})
+
+
+# ---------------------------------------------------------------- upload prices
+
+
+@router.post("/upload-prices")
+async def upload_prices(
+    file: UploadFile,
+    cfg: Config = Depends(get_cfg),
+    runner: JobRunner = Depends(get_runner),
+) -> JSONResponse:
+    if runner.is_busy():
+        raise HTTPException(409, "Another job is running. Please wait for it to finish.")
+
+    if not SKU_CACHE_FILE.exists():
+        raise HTTPException(
+            400,
+            "Product list has never been built. "
+            "Press 'Refresh product list' on the dashboard first.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix == ".xls":
+        raise HTTPException(
+            400,
+            "This format (.xls) is not supported. Please save your file as .xlsx and try again.",
+        )
+    if suffix not in ALLOWED_SUFFIXES:
+        raise HTTPException(400, "Only Excel files (.xlsx or .xlsm) are accepted.")
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = history.create_run("preview_prices", file_name=file.filename or "")
+    dest_dir = services.run_dir(run_id)
+    dest = dest_dir / "upload.xlsx"
+
+    written = 0
+    with dest.open("wb") as out:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                out.close()
+                dest.unlink(missing_ok=True)
+                history.set_status(run_id, "failed", error="File too large (>100 MB).")
+                raise HTTPException(413, "File too large (>100 MB).")
+            out.write(chunk)
+
+    job_id = runner.try_start(
+        "preview_prices",
+        services.preview_prices_job,
+        run_id=run_id,
+        upload_path=dest,
+        cfg=cfg,
+    )
+    if job_id is None:
+        history.set_status(run_id, "failed", error="Another job started first.")
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    return JSONResponse({"run_id": run_id, "job_id": job_id})
+
+
+@router.post("/apply-prices/{preview_run_id}")
+def apply_prices(
+    preview_run_id: int,
+    cfg: Config = Depends(get_cfg),
+    runner: JobRunner = Depends(get_runner),
+) -> JSONResponse:
+    if _apply_disabled():
+        raise HTTPException(403, "Apply is disabled in dev mode.")
+
+    preview = history.get_run(preview_run_id)
+    if preview is None or preview["kind"] != "preview_prices":
+        raise HTTPException(404, "Price preview not found.")
+    can_apply, reason = _apply_eligibility(preview)
+    if not can_apply:
+        status = 409 if "already" in reason or "running" in reason else 400
+        raise HTTPException(status, reason)
+
+    if runner.is_busy():
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    apply_run_id = history.create_run(
+        "apply_prices",
+        file_name=preview.get("file_name"),
+        parent_run_id=preview_run_id,
+    )
+    job_id = runner.try_start(
+        "apply_prices",
+        services.apply_prices_job,
         run_id=apply_run_id,
         preview_run_id=preview_run_id,
         cfg=cfg,
@@ -315,7 +415,7 @@ def _apply_eligibility(run: dict) -> tuple[bool, str]:
     Centralised so the frontend's apply button and the actual apply endpoint
     agree on the rules.
     """
-    if run["kind"] != "preview":
+    if run["kind"] not in {"preview", "preview_prices"}:
         return False, "Only previews can be applied."
     if run["status"] != "succeeded":
         return False, "Preview did not finish successfully."

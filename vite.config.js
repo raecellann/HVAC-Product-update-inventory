@@ -19,10 +19,12 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        dashboard: resolve(__dirname, "frontend/index.html"),
-        preview:   resolve(__dirname, "frontend/preview.html"),
-        history:   resolve(__dirname, "frontend/history.html"),
-        run:       resolve(__dirname, "frontend/run.html"),
+        dashboard:     resolve(__dirname, "frontend/index.html"),
+        preview:       resolve(__dirname, "frontend/preview.html"),
+        history:       resolve(__dirname, "frontend/history.html"),
+        run:           resolve(__dirname, "frontend/run.html"),
+        prices:        resolve(__dirname, "frontend/prices.html"),
+        previewPrices: resolve(__dirname, "frontend/preview-prices.html"),
       },
     },
   },
