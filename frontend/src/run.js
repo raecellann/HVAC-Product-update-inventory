@@ -1,4 +1,4 @@
-import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtDiff } from "./api.js";
+import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtDiff, fmtDateTime, fmtRelative } from "./api.js";
 
 const runId = getIdFromUrl();
 
@@ -19,8 +19,11 @@ async function init() {
 
   document.getElementById("summary-title").textContent =
     `${capitalize(run.kind)} #${run.id}`;
-  document.getElementById("summary-when").textContent =
-    `${run.created_at} — ${run.file_name || "—"}`;
+  const when = fmtDateTime(run.created_at);
+  const rel = fmtRelative(run.created_at);
+  const file = run.file_name || "—";
+  document.getElementById("summary-when").innerHTML =
+    `${escapeHtml(when)} <span class="muted">· ${escapeHtml(rel)}</span> · <span class="file-cell">${escapeHtml(file)}</span>`;
   document.getElementById("run-status").innerHTML = fmtStatus(run.status);
 
   renderAlerts(run);
@@ -35,7 +38,7 @@ function renderAlerts(run) {
     bits.push(`<div class="alert error">${escapeHtml(run.error)}</div>`);
   }
   if (run.applied_at) {
-    bits.push(`<p class="muted">Applied at ${escapeHtml(run.applied_at)}.</p>`);
+    bits.push(`<p class="muted">Applied ${escapeHtml(fmtDateTime(run.applied_at))}.</p>`);
   }
   el.innerHTML = bits.join("");
 }
@@ -107,11 +110,12 @@ function wireTable(detailId) {
   function render(data) {
     tbody.innerHTML = data.rows.map(r => `
       <tr>
-        <td>${escapeHtml(r.sku)}</td>
+        <td class="col-img">${renderThumb(r)}</td>
+        <td class="sku">${escapeHtml(r.sku)}</td>
         <td>${escapeHtml(r.title || "")}</td>
-        <td>${r.shopify_qty == null ? "—" : r.shopify_qty}</td>
-        <td>${r.new_qty}</td>
-        <td>${fmtDiff(r.diff)}</td>
+        <td class="num">${r.shopify_qty == null ? "—" : r.shopify_qty}</td>
+        <td class="num">${r.new_qty}</td>
+        <td class="num">${fmtDiff(r.diff)}</td>
       </tr>
     `).join("");
     const totalPages = Math.max(1, Math.ceil(data.total / data.per_page));
@@ -126,6 +130,13 @@ function wireTable(detailId) {
         load();
       });
     }
+  }
+
+  function renderThumb(r) {
+    if (r.image_url) {
+      return `<img class="product-thumb" src="${escapeHtml(r.image_url)}" alt="" loading="lazy">`;
+    }
+    return `<div class="product-thumb product-thumb--empty" aria-hidden="true"></div>`;
   }
 
   search.addEventListener("input", () => {

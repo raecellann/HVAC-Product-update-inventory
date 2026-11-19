@@ -30,9 +30,13 @@
         A job is currently running. Please wait for it to finish.
       </div>
 
-      <form id="upload-form" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".xlsx,.xlsm" required>
-        <button type="submit" id="upload-btn">Upload and preview</button>
+      <form id="upload-form" enctype="multipart/form-data" class="upload-form">
+        <label class="file-picker">
+          <input type="file" name="file" id="file-input" accept=".xlsx,.xlsm" required>
+          <span class="file-picker__btn">Choose file</span>
+          <span class="file-picker__name" id="file-picker-name">No file chosen</span>
+        </label>
+        <button type="submit" id="upload-btn" class="btn btn-primary">Upload and preview</button>
       </form>
       <div id="upload-status" class="status"></div>
     </section>
@@ -42,6 +46,17 @@
       <div id="cache-info">Loading…</div>
       <button id="refresh-cache-btn">Refresh product list</button>
       <div id="cache-status" class="status"></div>
+    </section>
+
+    <section class="card hidden" id="charts-card">
+      <div class="charts-header">
+        <h2>Latest preview at a glance</h2>
+        <p id="charts-subtitle" class="muted"></p>
+      </div>
+      <div class="charts-grid">
+        <div id="chart-match"></div>
+        <div id="chart-direction"></div>
+      </div>
     </section>
 
     <section class="card">

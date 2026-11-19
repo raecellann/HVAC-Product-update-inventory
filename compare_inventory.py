@@ -35,6 +35,7 @@ mutation {
         edges {
           node {
             sku
+            image { url }
             inventoryItem {
               id
               tracked
@@ -45,6 +46,7 @@ mutation {
                 }
               }
             }
+            product { id featuredImage { url } }
           }
         }
       }
@@ -177,6 +179,22 @@ def build_shopify_qty_map(rows: list[dict]) -> dict[str, int]:
                 qty = int(q.get("quantity") or 0)
                 break
         out[sku.lower()] = qty
+    return out
+
+
+def build_shopify_image_map(rows: list[dict]) -> dict[str, str]:
+    """{sku_lower: image_url}. Prefers the variant image; falls back to the
+    product's featured image. SKUs with no image are omitted."""
+    out: dict[str, str] = {}
+    for row in rows:
+        sku = (row.get("sku") or "").strip()
+        if not sku:
+            continue
+        variant_img = (row.get("image") or {}).get("url")
+        product_img = ((row.get("product") or {}).get("featuredImage") or {}).get("url")
+        url = variant_img or product_img
+        if url:
+            out[sku.lower()] = url
     return out
 
 

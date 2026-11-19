@@ -1,10 +1,75 @@
-import { handshakeIfKeyInUrl, apiGet, apiPost, pollJob, renderRunsTable, escapeHtml } from "./api.js";
+import { handshakeIfKeyInUrl, apiGet, apiPost, pollJob, renderRunsTable, escapeHtml, fmtDateTime, fmtRelative } from "./api.js";
+import { donut, stackedBar } from "./charts.js";
 
 async function init() {
   await handshakeIfKeyInUrl();
-  await Promise.all([loadDevBanner(), loadCache(), loadRuns()]);
+  await Promise.all([loadDevBanner(), loadCache(), loadRuns(), loadCharts()]);
+  wireFilePicker();
   wireUpload();
   wireCacheRefresh();
+}
+
+async function loadCharts() {
+  let runs;
+  try {
+    const data = await apiGet("/api/runs?limit=50");
+    runs = data.runs || [];
+  } catch {
+    return;
+  }
+  // Pick the most recent preview (successful or not) that still has detail files.
+  const run = runs.find(r =>
+    r.kind === "preview" && !r.details_purged && (r.counts && r.counts.matched != null)
+  );
+  if (!run) return;
+
+  let agg;
+  try {
+    agg = await apiGet(`/api/run/${run.id}/aggregates`);
+  } catch {
+    return;
+  }
+  const mb = agg.match_breakdown || {};
+  const cd = agg.change_direction || {};
+
+  const matchSegs = [
+    { label: "Matched",   value: mb.matched || 0,   color: "#059669" },
+    { label: "Unmatched", value: mb.unmatched || 0, color: "#64748b" },
+    { label: "Bad qty",   value: mb.bad_qty || 0,   color: "#b91c1c" },
+    { label: "Duplicate", value: mb.duplicate || 0, color: "#d97706" },
+    { label: "Untracked", value: mb.untracked || 0, color: "#6b21a8" },
+  ];
+  const dirSegs = [
+    { label: "Going up",   value: cd.up || 0,        color: "#059669" },
+    { label: "Going down", value: cd.down || 0,      color: "#d97706" },
+    { label: "To zero",    value: cd.to_zero || 0,   color: "#b91c1c" },
+    { label: "No change",  value: cd.no_change || 0, color: "#94a3b8" },
+  ];
+  const hasData = matchSegs.some(s => s.value > 0) || dirSegs.some(s => s.value > 0);
+  if (!hasData) return;
+
+  const card = document.getElementById("charts-card");
+  const sub = document.getElementById("charts-subtitle");
+  const link = `/run.html?id=${run.id}`;
+  sub.innerHTML = `
+    From <a class="btn-link" href="${link}">${escapeHtml(run.file_name || `run #${run.id}`)}</a>
+    · ${escapeHtml(fmtDateTime(run.created_at))}
+    <span class="muted">· ${escapeHtml(fmtRelative(run.created_at))}</span>
+  `;
+  document.getElementById("chart-match").innerHTML =
+    donut({ segments: matchSegs, title: "SKUs in file" });
+  document.getElementById("chart-direction").innerHTML =
+    stackedBar({ segments: dirSegs, title: "What this sync will do" });
+  card.classList.remove("hidden");
+}
+
+function wireFilePicker() {
+  const input = document.getElementById("file-input");
+  const name = document.getElementById("file-picker-name");
+  if (!input || !name) return;
+  input.addEventListener("change", () => {
+    name.textContent = input.files && input.files[0] ? input.files[0].name : "No file chosen";
+  });
 }
 
 async function loadDevBanner() {
@@ -28,12 +93,21 @@ async function loadCache() {
     const dupNote = meta.duplicate_count
       ? ` <span class="muted">(${meta.duplicate_count} duplicate SKUs are skipped.)</span>`
       : "";
+    const when = fmtDateTime(meta.refreshed_at);
+    const rel = fmtRelative(meta.refreshed_at);
     el.innerHTML = `
-      <p>
-        Last refreshed: <strong>${escapeHtml(meta.refreshed_at)}</strong>
-        (${meta.days_old} days ago).
-        ${meta.sku_count} products known.${dupNote}
-      </p>
+      <div class="stat-row">
+        <div class="stat">
+          <span class="stat-label">Last refreshed</span>
+          <span class="stat-value">${escapeHtml(when)}</span>
+          <span class="stat-sub muted">${escapeHtml(rel)}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Products known</span>
+          <span class="stat-value">${(meta.sku_count || 0).toLocaleString()}</span>
+          <span class="stat-sub muted">${dupNote ? escapeHtml(meta.duplicate_count + " duplicate SKUs skipped") : ""}</span>
+        </div>
+      </div>
       ${staleNote}
     `;
   } catch (e) {

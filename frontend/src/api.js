@@ -34,7 +34,14 @@ async function safeJson(res) {
 }
 
 export function fmtStatus(status) {
-  return `<span class="status-${escapeHtml(status)}">${escapeHtml(status)}</span>`;
+  const label = String(status || "").replace(/_/g, " ");
+  return `<span class="pill pill--${escapeHtml(status)}">${escapeHtml(label)}</span>`;
+}
+
+export function fmtKind(kind) {
+  const labels = { preview: "Preview", apply: "Applied", cache_refresh: "Product list" };
+  const label = labels[kind] || kind || "";
+  return `<span class="pill pill--kind pill--kind-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
 }
 
 export function fmtDiff(diff) {
@@ -42,6 +49,50 @@ export function fmtDiff(diff) {
   const cls = diff > 0 ? "diff-pos" : diff < 0 ? "diff-neg" : "";
   const sign = diff > 0 ? "+" : "";
   return `<span class="${cls}">${sign}${diff}</span>`;
+}
+
+// ---------- date / time ----------
+
+function _parseIso(iso) {
+  if (!iso) return null;
+  // Server stamps "YYYY-MM-DDTHH:MM:SSZ" (no fractional). new Date handles it.
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// "Nov 19, 2026, 3:49 PM"
+export function fmtDateTime(iso) {
+  const d = _parseIso(iso);
+  if (!d) return "";
+  return d.toLocaleString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+}
+
+// "3:49 PM"
+export function fmtTime(iso) {
+  const d = _parseIso(iso);
+  if (!d) return "";
+  return d.toLocaleString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+// "just now" / "5 min ago" / "3 hours ago" / "2 days ago"
+export function fmtRelative(iso) {
+  const d = _parseIso(iso);
+  if (!d) return "";
+  const sec = Math.round((Date.now() - d.getTime()) / 1000);
+  if (sec < 45) return "just now";
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return `${day} day${day === 1 ? "" : "s"} ago`;
+  const mon = Math.round(day / 30);
+  if (mon < 12) return `${mon} month${mon === 1 ? "" : "s"} ago`;
+  const yr = Math.round(mon / 12);
+  return `${yr} year${yr === 1 ? "" : "s"} ago`;
 }
 
 // Polls /api/status/:id until succeeded/failed; reports to `statusEl`.
@@ -81,15 +132,18 @@ export function renderRunsTable(runs, mountEl) {
       ? `pushed ${r.pushed || 0}${r.user_errors ? `, ${r.user_errors} errors` : ""}`
       : r.kind === "cache_refresh"
         ? `${counts.sku_count || 0} products`
-        : `${counts.matched || 0} matched / ${counts.will_change || 0} changes`;
+        : `${counts.matched || 0} matched · ${counts.will_change || 0} changes`;
     return `
       <tr>
-        <td>${escapeHtml(r.created_at)}</td>
-        <td>${escapeHtml(r.kind)}</td>
-        <td>${escapeHtml(r.file_name || "—")}</td>
+        <td>
+          <div class="when-primary">${escapeHtml(fmtDateTime(r.created_at))}</div>
+          <div class="when-secondary muted">${escapeHtml(fmtRelative(r.created_at))}</div>
+        </td>
+        <td>${fmtKind(r.kind)}</td>
+        <td class="file-cell">${escapeHtml(r.file_name || "—")}</td>
         <td>${fmtStatus(r.status)}</td>
         <td>${escapeHtml(detail)}</td>
-        <td><a href="/run.html?id=${r.id}">view</a></td>
+        <td class="row-actions"><a class="btn-link" href="/run.html?id=${r.id}">View</a></td>
       </tr>
     `;
   }).join("");

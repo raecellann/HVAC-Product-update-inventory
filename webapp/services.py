@@ -79,13 +79,15 @@ def preview_job(
         url = cmp_mod.wait_for_bulk(client)
         bulk_rows = cmp_mod.download_jsonl(url)
         shopify_qtys = cmp_mod.build_shopify_qty_map(bulk_rows)
+        shopify_images = cmp_mod.build_shopify_image_map(bulk_rows)
 
         progress(0, 0, "Building preview")
         preview_rows: list[dict] = []
         will_change = 0
         for m in match.matched:
             sku_lc = m["sku"].lower()
-            title = sku_map.get(sku_lc, {}).get("title", "")
+            cache_hit = sku_map.get(sku_lc, {})
+            title = cache_hit.get("title", "")
             sh_q = shopify_qtys.get(sku_lc)
             diff = None if sh_q is None else m["quantity"] - sh_q
             if diff is not None and diff != 0:
@@ -93,6 +95,7 @@ def preview_job(
             preview_rows.append({
                 "sku": m["sku"],
                 "title": title,
+                "image_url": shopify_images.get(sku_lc) or cache_hit.get("image_url"),
                 "shopify_qty": sh_q,
                 "new_qty": m["quantity"],
                 "diff": diff,

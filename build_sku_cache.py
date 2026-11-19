@@ -40,8 +40,9 @@ mutation {
             id
             sku
             displayName
+            image { url }
             inventoryItem { id tracked }
-            product { id title }
+            product { id title featuredImage { url } }
           }
         }
       }
@@ -142,11 +143,14 @@ def build_cache(rows: list[dict]) -> dict:
         if not inv.get("tracked"):
             untracked += 1
             # Still cache it so we can report later
+        variant_img = (row.get("image") or {}).get("url")
+        product_img = ((row.get("product") or {}).get("featuredImage") or {}).get("url")
         entry = {
             "inventory_item_id": inv["id"],
             "variant_id": row["id"],
             "title": (row.get("product") or {}).get("title") or row.get("displayName") or "",
             "tracked": bool(inv.get("tracked")),
+            "image_url": variant_img or product_img or "",
         }
         key = sku.lower()
         if key in skus:

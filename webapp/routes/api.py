@@ -241,6 +241,49 @@ def run_preview(run_id: int, page: int = 1, q: str = "", per_page: int = 50) -> 
     })
 
 
+# --------------------------------------------------------------- aggregates
+
+
+@router.get("/run/{run_id}/aggregates")
+def run_aggregates(run_id: int) -> JSONResponse:
+    """Chart-ready summaries: match breakdown + change direction counts."""
+    run = history.get_run(run_id)
+    if run is None:
+        raise HTTPException(404, "Run not found.")
+    counts = run.get("counts") or {}
+
+    match_breakdown = {
+        "matched": counts.get("matched", 0),
+        "unmatched": counts.get("unmatched", 0),
+        "bad_qty": counts.get("bad_qty", 0),
+        "duplicate": counts.get("duplicate", 0),
+        "untracked": counts.get("untracked", 0),
+    }
+
+    change_direction = {"up": 0, "down": 0, "to_zero": 0, "no_change": 0, "unknown": 0}
+    path = RUNS_DIR / str(run_id) / "preview.json"
+    if path.exists():
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        for r in rows:
+            diff = r.get("diff")
+            new_qty = r.get("new_qty")
+            if diff is None:
+                change_direction["unknown"] += 1
+            elif diff == 0:
+                change_direction["no_change"] += 1
+            elif diff > 0:
+                change_direction["up"] += 1
+            elif new_qty == 0:
+                change_direction["to_zero"] += 1
+            else:
+                change_direction["down"] += 1
+
+    return JSONResponse({
+        "match_breakdown": match_breakdown,
+        "change_direction": change_direction,
+    })
+
+
 # ------------------------------------------------------------------ CSV download
 
 

@@ -1,4 +1,4 @@
-import { handshakeIfKeyInUrl, apiGet, apiPost, pollJob, getIdFromUrl, escapeHtml, fmtDiff } from "./api.js";
+import { handshakeIfKeyInUrl, apiGet, apiPost, pollJob, getIdFromUrl, escapeHtml, fmtDiff, fmtDateTime } from "./api.js";
 
 const runId = getIdFromUrl();
 
@@ -31,7 +31,7 @@ async function loadRun() {
 
   document.getElementById("summary-title").textContent =
     `Preview for ${run.file_name || "upload"}`;
-  document.getElementById("summary-when").textContent = run.created_at;
+  document.getElementById("summary-when").textContent = fmtDateTime(run.created_at);
 
   renderAlerts(run);
   renderCounts(run);
@@ -52,7 +52,7 @@ function renderAlerts(run) {
     bits.push(`<div class="alert warn">${escapeHtml(w)}</div>`);
   }
   if (run.applied_at) {
-    bits.push(`<div class="alert info">Applied at ${escapeHtml(run.applied_at)}.</div>`);
+    bits.push(`<div class="alert info">Applied ${escapeHtml(fmtDateTime(run.applied_at))}.</div>`);
   }
   el.innerHTML = bits.join("");
 }
@@ -139,18 +139,26 @@ function wireTable() {
       const data = await apiGet(`/api/run/${runId}/preview?${qs}`);
       render(data);
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="5" class="err">${escapeHtml(e.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="err">${escapeHtml(e.message)}</td></tr>`;
     }
+  }
+
+  function renderThumb(r) {
+    if (r.image_url) {
+      return `<img class="product-thumb" src="${escapeHtml(r.image_url)}" alt="" loading="lazy">`;
+    }
+    return `<div class="product-thumb product-thumb--empty" aria-hidden="true"></div>`;
   }
 
   function render(data) {
     tbody.innerHTML = data.rows.map(r => `
       <tr>
-        <td>${escapeHtml(r.sku)}</td>
+        <td class="col-img">${renderThumb(r)}</td>
+        <td class="sku">${escapeHtml(r.sku)}</td>
         <td>${escapeHtml(r.title || "")}</td>
-        <td>${r.shopify_qty == null ? "—" : r.shopify_qty}</td>
-        <td>${r.new_qty}</td>
-        <td>${fmtDiff(r.diff)}</td>
+        <td class="num">${r.shopify_qty == null ? "—" : r.shopify_qty}</td>
+        <td class="num">${r.new_qty}</td>
+        <td class="num">${fmtDiff(r.diff)}</td>
       </tr>
     `).join("");
     const totalPages = Math.max(1, Math.ceil(data.total / data.per_page));
