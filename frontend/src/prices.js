@@ -1,6 +1,7 @@
 import {
-  apiGet, apiPost, pollJob, escapeHtml,
-  fmtStatus, fmtKind, fmtDateTime, fmtRelative,
+  apiGet, pollJob, escapeHtml,
+  fmtStatus, fmtKind, fmtFile, fmtDateTime, fmtRelative,
+  uploadWithProgress, renderUploadProgress,
 } from "./api.js";
 
 async function init() {
@@ -31,9 +32,10 @@ function wireUpload() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    status.textContent = "Uploading…";
+    renderUploadProgress(status, 0, 0);
     try {
-      const data = await apiPost("/api/upload-prices", { body: fd });
+      const data = await uploadWithProgress("/api/upload-prices", fd,
+        (loaded, total) => renderUploadProgress(status, loaded, total));
       status.textContent = "Preview is being prepared…";
       pollJob(data.job_id, status, () => {
         window.location.href = `/preview-prices.html?id=${data.run_id}`;
@@ -70,7 +72,7 @@ async function loadRuns() {
             <div class="when-secondary muted">${escapeHtml(fmtRelative(r.created_at))}</div>
           </td>
           <td>${fmtKind(r.kind)}</td>
-          <td class="file-cell">${escapeHtml(r.file_name || "—")}</td>
+          <td>${fmtFile(r)}</td>
           <td>${fmtStatus(r.status)}</td>
           <td>${escapeHtml(detail)}</td>
           <td class="row-actions"><a class="btn-link" href="${link}">View</a></td>

@@ -1,4 +1,4 @@
-import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtDiff, fmtDateTime, fmtRelative } from "./api.js";
+import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtFile, fmtDiff, fmtDateTime, fmtRelative } from "./api.js";
 
 const runId = getIdFromUrl();
 
@@ -17,13 +17,18 @@ async function init() {
     return;
   }
 
-  document.getElementById("summary-title").textContent =
-    `${capitalize(run.kind)} #${run.id}`;
+  const kindLabel = {
+    preview: "Inventory preview",
+    apply: "Inventory updated",
+    cache_refresh: "Product list refresh",
+    preview_prices: "Price preview",
+    apply_prices: "Prices updated",
+  }[run.kind] || capitalize(run.kind);
+  document.getElementById("summary-title").textContent = `${kindLabel} #${run.id}`;
   const when = fmtDateTime(run.created_at);
   const rel = fmtRelative(run.created_at);
-  const file = run.file_name || "—";
   document.getElementById("summary-when").innerHTML =
-    `${escapeHtml(when)} <span class="muted">· ${escapeHtml(rel)}</span> · <span class="file-cell">${escapeHtml(file)}</span>`;
+    `${escapeHtml(when)} <span class="muted">· ${escapeHtml(rel)}</span> · ${fmtFile(run)}`;
   document.getElementById("run-status").innerHTML = fmtStatus(run.status);
 
   renderAlerts(run);

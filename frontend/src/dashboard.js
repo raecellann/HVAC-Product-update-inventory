@@ -1,4 +1,7 @@
-import { handshakeIfKeyInUrl, apiGet, apiPost, pollJob, renderRunsTable, escapeHtml, fmtDateTime, fmtRelative } from "./api.js";
+import {
+  handshakeIfKeyInUrl, apiGet, apiPost, pollJob, renderRunsTable, escapeHtml,
+  fmtDateTime, fmtRelative, uploadWithProgress, renderUploadProgress,
+} from "./api.js";
 import { donut, stackedBar } from "./charts.js";
 
 async function init() {
@@ -131,9 +134,10 @@ function wireUpload() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    status.textContent = "Uploading…";
+    renderUploadProgress(status, 0, 0);
     try {
-      const data = await apiPost("/api/upload", { body: fd });
+      const data = await uploadWithProgress("/api/upload", fd,
+        (loaded, total) => renderUploadProgress(status, loaded, total));
       status.textContent = "Preview is being prepared…";
       pollJob(data.job_id, status, () => {
         window.location.href = `/preview.html?id=${data.run_id}`;

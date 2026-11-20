@@ -44,14 +44,76 @@ export function fmtStatus(status) {
 
 export function fmtKind(kind) {
   const labels = {
-    preview: "Preview",
-    apply: "Applied",
-    cache_refresh: "Product list",
+    preview: "Inventory preview",
+    apply: "Inventory updated",
+    cache_refresh: "Product list refresh",
     preview_prices: "Price preview",
-    apply_prices: "Prices applied",
+    apply_prices: "Prices updated",
   };
   const label = labels[kind] || kind || "";
   return `<span class="pill pill--kind pill--kind-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
+}
+
+// What to show in the FILE column. Cache refresh pulls from Shopify, not a
+// file, so say so explicitly instead of a bare dash.
+export function fmtFile(run) {
+  if (run?.kind === "cache_refresh") {
+    return '<span class="file-cell file-cell--source">Shopify catalog</span>';
+  }
+  const name = run?.file_name;
+  if (name) return `<span class="file-cell">${escapeHtml(name)}</span>`;
+  return '<span class="muted">—</span>';
+}
+
+// ---------- upload with progress ----------
+
+// XHR-based upload so we can surface byte progress. fetch() has no upload
+// progress event, which is why the earlier "Uploading…" text sat frozen.
+export function uploadWithProgress(url, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.responseType = "json";
+    xhr.upload.addEventListener("progress", (ev) => {
+      if (onProgress) onProgress(ev.loaded, ev.lengthComputable ? ev.total : 0);
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response);
+      } else {
+        const msg = xhr.response?.detail || `Upload failed (${xhr.status})`;
+        const err = new Error(msg);
+        err.status = xhr.status;
+        reject(err);
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
+    xhr.addEventListener("abort",  () => reject(new Error("Upload cancelled")));
+    xhr.send(formData);
+  });
+}
+
+function _fmtBytes(n) {
+  if (!n && n !== 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function renderUploadProgress(statusEl, loaded, total) {
+  const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+  const pctAttr = total > 0 ? `value="${pct}" max="100"` : ""; // indeterminate if no total
+  const bytes = total > 0
+    ? `${_fmtBytes(loaded)} / ${_fmtBytes(total)}`
+    : `${_fmtBytes(loaded)} sent`;
+  const label = total > 0 ? `Uploading… ${pct}%` : "Uploading…";
+  statusEl.innerHTML = `
+    <div class="upload-progress">
+      <div class="upload-progress__label">${escapeHtml(label)}</div>
+      <progress class="upload-progress__bar" ${pctAttr}></progress>
+      <div class="upload-progress__bytes muted">${escapeHtml(bytes)}</div>
+    </div>
+  `;
 }
 
 export function fmtDiff(diff) {
@@ -182,7 +244,7 @@ export function renderRunsTable(runs, mountEl) {
           <div class="when-secondary muted">${escapeHtml(fmtRelative(r.created_at))}</div>
         </td>
         <td>${fmtKind(r.kind)}</td>
-        <td class="file-cell">${escapeHtml(r.file_name || "—")}</td>
+        <td>${fmtFile(r)}</td>
         <td>${fmtStatus(r.status)}</td>
         <td>${escapeHtml(detail)}</td>
         <td class="row-actions"><a class="btn-link" href="${viewHref}">View</a></td>
