@@ -15,7 +15,9 @@ export async function apiGet(path) {
   const res = await fetch(path);
   if (!res.ok) {
     const body = await safeJson(res);
-    throw new Error(body?.detail || `Request failed (${res.status})`);
+    const err = new Error(body?.detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -24,7 +26,9 @@ export async function apiPost(path, options = {}) {
   const res = await fetch(path, { method: "POST", ...options });
   if (!res.ok) {
     const body = await safeJson(res);
-    throw new Error(body?.detail || `Request failed (${res.status})`);
+    const err = new Error(body?.detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -102,15 +106,39 @@ export function fmtRelative(iso) {
 }
 
 // Polls /api/status/:id until succeeded/failed; reports to `statusEl`.
+// Also recovers the "server restarted mid-job" case: job state lives in memory,
+// so after a restart /api/status returns 404 forever. Detect that and surface
+// an actionable message instead of spinning silently.
 export async function pollJob(jobId, statusEl, onDone) {
+  let sawRunning = false;
+  let consecutive404 = 0;
+  let consecutiveNetErr = 0;
   while (true) {
     await sleep(2000);
     let data;
     try {
       data = await apiGet(`/api/status/${jobId}`);
-    } catch {
+      consecutive404 = 0;
+      consecutiveNetErr = 0;
+    } catch (e) {
+      if (e.status === 404) {
+        consecutive404++;
+        // Once we've seen the job alive, a 404 means it's gone (server restart).
+        // Before we've ever seen it, give a brief grace period for race at startup.
+        if (sawRunning || consecutive404 >= 3) {
+          statusEl.innerHTML = `<span class="err">The upload was interrupted — the server likely restarted (this can happen with very large files). Please upload the file again.</span>`;
+          return;
+        }
+      } else {
+        consecutiveNetErr++;
+        if (consecutiveNetErr >= 10) {
+          statusEl.innerHTML = `<span class="err">Lost connection to the server. Please refresh the page and try again.</span>`;
+          return;
+        }
+      }
       continue;
     }
+    sawRunning = true;
     const p = data.progress || {};
     const txt = p.message || "Working…";
     const bar = p.total > 0 ? ` (${p.done} / ${p.total})` : "";

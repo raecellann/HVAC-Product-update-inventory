@@ -7,7 +7,9 @@ that mutation is per-product.
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -20,6 +22,7 @@ from config import Config
 from shopify_client import ShopifyClient, ShopifyUserError
 
 BATCH_SIZE = 100  # variants per productVariantsBulkUpdate call (same product)
+PUSH_WORKERS = 8  # parallel workers for productVariantsBulkUpdate; Shopify throttles per-shop
 
 VARIANTS_BULK_UPDATE_MUTATION = """
 mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -96,22 +99,36 @@ def read_price_excel(path: Path, sku_col: str, price_col: str) -> list[dict]:
     if price_idx is None:
         raise ValueError(f"Price column '{price_col}' not found. Header row: {header}")
 
+    # Some Excel files declare a used range that extends tens of thousands of
+    # rows past the real data. Keep reading tolerates occasional blanks but
+    # bails out once we've seen a long stretch with no SKU + no price —
+    # otherwise openpyxl walks to row 1,048,576 and the worker OOMs.
+    BLANK_RUN_LIMIT = 2000
     rows: list[dict] = []
+    blank_run = 0
     for i, row in enumerate(rows_iter, start=2):
         if row is None:
+            blank_run += 1
+            if blank_run >= BLANK_RUN_LIMIT:
+                break
             continue
         sku = row[sku_idx] if sku_idx < len(row) else None
         price = row[price_idx] if price_idx < len(row) else None
 
         if sku is None and price is None:
-            continue  # blank row
+            blank_run += 1
+            if blank_run >= BLANK_RUN_LIMIT:
+                break
+            continue
 
+        blank_run = 0
         rows.append({
             "row": i,
             "sku": (str(sku).strip() if sku is not None else ""),
             "price_raw": price,
         })
 
+    wb.close()
     return rows
 
 
@@ -238,9 +255,14 @@ def download_jsonl(url: str) -> list[dict]:
 
 
 def build_shopify_price_map(rows: list[dict]) -> dict[str, dict]:
-    """{sku_lower: {'price': '12.99', 'product_id': 'gid://...', 'image_url': '...'}}."""
+    """{sku_lower: {'price': '12.99', 'product_id': 'gid://...', 'image_url': '...'}}.
+
+    Mutates `rows` — pops each entry as it's consumed so we don't hold the
+    input list AND the output dict in memory at once for 70k+ variants.
+    """
     out: dict[str, dict] = {}
-    for row in rows:
+    while rows:
+        row = rows.pop()
         sku = (row.get("sku") or "").strip()
         if not sku:
             continue
@@ -284,11 +306,14 @@ def push_price_batches(
     matched: list[dict],
     progress_cb: Callable[[int, int], None] | None = None,
     log: logging.Logger | None = None,
+    workers: int = PUSH_WORKERS,
 ) -> PricePushResult:
-    """Push matched price rows, grouped by product_id.
+    """Push matched price rows, grouped by product_id, in parallel.
 
     Each matched row must include `product_id`. If a product has more than
-    BATCH_SIZE variants, we split that product across calls.
+    BATCH_SIZE variants, we split that product across calls. Shopify's
+    throttle is per-shop, so parallel workers mostly help absorb burst
+    capacity in the cost bucket; steady-state is still throttle-bound.
     """
     log = log or logging.getLogger(__name__)
     total = len(matched)
@@ -303,31 +328,50 @@ def push_price_batches(
             continue
         by_product.setdefault(pid, []).append(m)
 
-    processed = 0
-    product_count = 0
+    # Flatten to a list of (product_id, chunk) tasks.
+    tasks: list[tuple[str, list[dict]]] = []
     for pid, variants in by_product.items():
-        product_count += 1
         for i in range(0, len(variants), BATCH_SIZE):
-            chunk = variants[i : i + BATCH_SIZE]
-            try:
-                errs = push_product_prices(client, pid, chunk)
-            except ShopifyUserError as e:
-                log.error("Product %s failed: %s", pid, e)
-                result.user_errors.append({"product_id": pid, "error": str(e)})
-                processed += len(chunk)
+            tasks.append((pid, variants[i : i + BATCH_SIZE]))
+
+    log.info(
+        "Pushing %d variants across %d products in %d tasks with %d workers",
+        total, len(by_product), len(tasks), workers,
+    )
+
+    lock = threading.Lock()
+    completed_tasks = 0
+
+    def _push_one(pid: str, chunk: list[dict]) -> tuple[str, list[dict], list[dict] | None, str | None]:
+        """Returns (product_id, chunk, user_errors_or_none, exception_msg_or_none)."""
+        try:
+            errs = push_product_prices(client, pid, chunk)
+            return pid, chunk, errs or [], None
+        except ShopifyUserError as e:
+            return pid, chunk, None, str(e)
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="price-push") as pool:
+        futures = [pool.submit(_push_one, pid, chunk) for pid, chunk in tasks]
+        for fut in as_completed(futures):
+            pid, chunk, errs, exc_msg = fut.result()
+            with lock:
+                completed_tasks += 1
+                if exc_msg is not None:
+                    log.error("Product %s failed: %s", pid, exc_msg)
+                    result.user_errors.append({"product_id": pid, "error": exc_msg})
+                else:
+                    if errs:
+                        for ue in errs:
+                            log.warning("  userError on product %s: %s", pid, ue)
+                            result.user_errors.append({"product_id": pid, **ue})
+                    result.pushed += len(chunk)
                 if progress_cb:
                     progress_cb(result.pushed, total)
-                continue
-            if errs:
-                for ue in errs:
-                    log.warning("  userError on product %s: %s", pid, ue)
-                    result.user_errors.append({"product_id": pid, **ue})
-            result.pushed += len(chunk)
-            processed += len(chunk)
-            if progress_cb:
-                progress_cb(result.pushed, total)
-        if product_count % 50 == 0:
-            log.info("Pushed %d / %d (%d products)", result.pushed, total, product_count)
+                if completed_tasks % 100 == 0:
+                    log.info(
+                        "Pushed %d / %d variants (%d / %d tasks)",
+                        result.pushed, total, completed_tasks, len(tasks),
+                    )
 
-    log.info("Pushed %d / %d total (%d products)", result.pushed, total, product_count)
+    log.info("Pushed %d / %d variants total", result.pushed, total)
     return result

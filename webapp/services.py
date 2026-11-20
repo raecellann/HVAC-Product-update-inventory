@@ -243,6 +243,7 @@ def preview_prices_job(
     try:
         progress(0, 0, "Reading Excel")
         rows = read_price_excel(upload_path, cfg.sku_column, cfg.price_column)
+        excel_row_count = len(rows)
 
         progress(0, 0, "Loading product list")
         cache = load_sku_cache()
@@ -250,6 +251,9 @@ def preview_prices_job(
 
         progress(0, 0, "Matching SKUs")
         match = match_price_rows(rows, cache)
+        # Big list of raw Excel dicts — not needed after matching. Free it
+        # before we download the Shopify bulk result, which can be ~100 MB.
+        del rows
 
         progress(0, 0, "Fetching current Shopify prices (this takes a minute)")
         client = client_factory(cfg)
@@ -257,6 +261,7 @@ def preview_prices_job(
         url = price_wait_for_bulk(client)
         bulk_rows = price_download_jsonl(url)
         price_info = build_shopify_price_map(bulk_rows)
+        del bulk_rows  # build_shopify_price_map empties it, release the handle
 
         progress(0, 0, "Building preview")
         preview_rows: list[dict] = []
@@ -292,7 +297,7 @@ def preview_prices_job(
         _write_price_problems_csv(d / "problems.csv", match)
 
         counts = {
-            "excel_rows": len(rows),
+            "excel_rows": excel_row_count,
             "matched": len(match.matched),
             "will_change": will_change,
             "unmatched": len(match.unmatched),
