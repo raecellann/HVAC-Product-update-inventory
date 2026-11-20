@@ -274,6 +274,112 @@ def apply_prices(
     return JSONResponse({"run_id": apply_run_id, "job_id": job_id})
 
 
+# ------------------------------------------------- combined inventory+prices
+
+
+@router.post("/upload-both")
+async def upload_both(
+    file: UploadFile,
+    cfg: Config = Depends(get_cfg),
+    runner: JobRunner = Depends(get_runner),
+) -> JSONResponse:
+    """Upload an Excel and preview BOTH inventory and prices in one run.
+
+    If the file only has a Qty column (no final_price), the combined job
+    gracefully degrades to inventory-only — the UI shows one section instead
+    of two.
+    """
+    if runner.is_busy():
+        raise HTTPException(409, "Another job is running. Please wait for it to finish.")
+
+    if not SKU_CACHE_FILE.exists():
+        raise HTTPException(
+            400,
+            "Product list has never been built. "
+            "Press 'Refresh product list' on the dashboard first.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix == ".xls":
+        raise HTTPException(
+            400,
+            "This format (.xls) is not supported. Please save your file as .xlsx and try again.",
+        )
+    if suffix not in ALLOWED_SUFFIXES:
+        raise HTTPException(400, "Only Excel files (.xlsx or .xlsm) are accepted.")
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = history.create_run("preview_both", file_name=file.filename or "")
+    dest_dir = services.run_dir(run_id)
+    dest = dest_dir / "upload.xlsx"
+
+    written = 0
+    with dest.open("wb") as out:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                out.close()
+                dest.unlink(missing_ok=True)
+                history.set_status(run_id, "failed", error="File too large (>100 MB).")
+                raise HTTPException(413, "File too large (>100 MB).")
+            out.write(chunk)
+
+    job_id = runner.try_start(
+        "preview_both",
+        services.preview_both_job,
+        run_id=run_id,
+        upload_path=dest,
+        cfg=cfg,
+    )
+    if job_id is None:
+        history.set_status(run_id, "failed", error="Another job started first.")
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    return JSONResponse({"run_id": run_id, "job_id": job_id})
+
+
+@router.post("/apply-both/{preview_run_id}")
+def apply_both(
+    preview_run_id: int,
+    cfg: Config = Depends(get_cfg),
+    runner: JobRunner = Depends(get_runner),
+) -> JSONResponse:
+    if _apply_disabled():
+        raise HTTPException(403, "Apply is disabled in dev mode.")
+
+    preview = history.get_run(preview_run_id)
+    if preview is None or preview["kind"] != "preview_both":
+        raise HTTPException(404, "Combined preview not found.")
+    can_apply, reason = _apply_eligibility(preview)
+    if not can_apply:
+        status = 409 if "already" in reason or "running" in reason else 400
+        raise HTTPException(status, reason)
+
+    if runner.is_busy():
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    apply_run_id = history.create_run(
+        "apply_both",
+        file_name=preview.get("file_name"),
+        parent_run_id=preview_run_id,
+    )
+    job_id = runner.try_start(
+        "apply_both",
+        services.apply_both_job,
+        run_id=apply_run_id,
+        preview_run_id=preview_run_id,
+        cfg=cfg,
+    )
+    if job_id is None:
+        history.set_status(apply_run_id, "failed", error="Another job started first.")
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    return JSONResponse({"run_id": apply_run_id, "job_id": job_id})
+
+
 # ------------------------------------------------------------------ cache refresh
 
 
@@ -326,6 +432,44 @@ def run_preview(run_id: int, page: int = 1, q: str = "", per_page: int = 50) -> 
         raise HTTPException(410, "Details for this run have expired.")
 
     path = RUNS_DIR / str(run_id) / "preview.json"
+    if not path.exists():
+        return JSONResponse({"rows": [], "total": 0, "page": 1, "per_page": per_page})
+
+    rows = json.loads(path.read_text(encoding="utf-8"))
+
+    if q:
+        ql = q.lower()
+        rows = [
+            r for r in rows
+            if ql in (r.get("sku") or "").lower() or ql in (r.get("title") or "").lower()
+        ]
+
+    total = len(rows)
+    page = max(1, page)
+    per_page = max(1, min(per_page, 500))
+    start = (page - 1) * per_page
+    return JSONResponse({
+        "rows": rows[start:start + per_page],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })
+
+
+@router.get("/run/{run_id}/preview-prices")
+def run_preview_prices(run_id: int, page: int = 1, q: str = "", per_page: int = 50) -> JSONResponse:
+    """Paginated price rows for a combined preview_both run.
+
+    Mirrors /run/{id}/preview but reads preview_prices.json. Used by the
+    combined preview page to show two tables side by side.
+    """
+    run = history.get_run(run_id)
+    if run is None:
+        raise HTTPException(404, "Run not found.")
+    if run.get("details_purged"):
+        raise HTTPException(410, "Details for this run have expired.")
+
+    path = RUNS_DIR / str(run_id) / "preview_prices.json"
     if not path.exists():
         return JSONResponse({"rows": [], "total": 0, "page": 1, "per_page": per_page})
 
@@ -424,7 +568,7 @@ def _apply_eligibility(run: dict) -> tuple[bool, str]:
     Centralised so the frontend's apply button and the actual apply endpoint
     agree on the rules.
     """
-    if run["kind"] not in {"preview", "preview_prices"}:
+    if run["kind"] not in {"preview", "preview_prices", "preview_both"}:
         return False, "Only previews can be applied."
     if run["status"] != "succeeded":
         return False, "Preview did not finish successfully."

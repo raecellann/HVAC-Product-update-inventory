@@ -12,8 +12,8 @@
     <div class="wrap">
       <a href="/" class="brand">HVAC Inventory</a>
       <nav>
-        <a href="/">Update inventory</a>
-        <a href="/prices.html">Update prices</a>
+        <a href="/">Update inventory + prices</a>
+        <a href="/prices.html">Update prices only</a>
         <a href="/history.html">Latest changes</a>
       </nav>
     </div>
@@ -26,6 +26,17 @@
       <div id="progress" class="hidden"></div>
       <div id="alerts"></div>
       <div id="counts" class="counts"></div>
+    </section>
+
+    <section class="card hidden" id="run-charts-card">
+      <div class="charts-header">
+        <h2 id="run-charts-title">At a glance</h2>
+        <p id="run-charts-subtitle" class="muted"></p>
+      </div>
+      <div class="charts-grid">
+        <div id="run-chart-primary"></div>
+        <div id="run-chart-secondary"></div>
+      </div>
     </section>
 
     <section class="card hidden" id="table-card">

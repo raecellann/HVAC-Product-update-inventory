@@ -164,11 +164,11 @@ function wireUpload() {
     const fd = new FormData(form);
     renderUploadProgress(status, 0, 0);
     try {
-      const data = await uploadWithProgress("/api/upload", fd,
+      const data = await uploadWithProgress("/api/upload-both", fd,
         (loaded, total) => renderUploadProgress(status, loaded, total));
       status.textContent = "Preview is being prepared…";
       pollJob(data.job_id, status, () => {
-        window.location.href = `/preview.html?id=${data.run_id}`;
+        window.location.href = `/preview-both.html?id=${data.run_id}`;
       });
     } catch (e) {
       status.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;

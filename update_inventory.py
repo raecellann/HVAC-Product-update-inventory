@@ -14,6 +14,7 @@ import json
 import logging
 import shutil
 import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -27,8 +28,8 @@ from shopify_client import ShopifyClient, ShopifyUserError
 BATCH_SIZE = 100  # inventorySetQuantities accepts up to 250; 100 is a safe margin
 
 SET_QUANTITIES_MUTATION = """
-mutation inventorySetOnHand($input: InventorySetQuantitiesInput!) {
-  inventorySetQuantities(input: $input) {
+mutation inventorySetOnHand($input: InventorySetQuantitiesInput!, $key: String!) {
+  inventorySetQuantities(input: $input) @idempotent(key: $key) {
     inventoryAdjustmentGroup {
       createdAt
       reason
@@ -40,8 +41,8 @@ mutation inventorySetOnHand($input: InventorySetQuantitiesInput!) {
 """
 
 ADJUST_QUANTITIES_MUTATION = """
-mutation inventoryAdjust($input: InventoryAdjustQuantitiesInput!) {
-  inventoryAdjustQuantities(input: $input) {
+mutation inventoryAdjust($input: InventoryAdjustQuantitiesInput!, $key: String!) {
+  inventoryAdjustQuantities(input: $input) @idempotent(key: $key) {
     inventoryAdjustmentGroup {
       createdAt
       reason
@@ -51,7 +52,6 @@ mutation inventoryAdjust($input: InventoryAdjustQuantitiesInput!) {
   }
 }
 """
-
 
 def pick_input_file() -> Path:
     files = [
@@ -137,21 +137,28 @@ def batched(items: list, size: int):
 
 
 def push_absolute(client, location_id: str, batch: list[dict]) -> list[dict]:
-    """batch rows: [{inventory_item_id, quantity, sku}]."""
+    """batch rows: [{inventory_item_id, quantity, sku}].
+
+    API 2026-10 requires an @idempotent(key: ...) directive and a
+    `changeFromQuantity` field per quantity. Passing null for
+    changeFromQuantity opts out of the compare-and-set check — safe for a
+    daily batch sync where the Excel is source of truth.
+    """
     payload = {
         "input": {
             "reason": "correction",
             "name": "available",
-            "ignoreCompareQuantity": True,
             "quantities": [
                 {
                     "inventoryItemId": r["inventory_item_id"],
                     "locationId": location_id,
                     "quantity": r["quantity"],
+                    "changeFromQuantity": None,
                 }
                 for r in batch
             ],
-        }
+        },
+        "key": str(uuid.uuid4()),
     }
     data = client.graphql(SET_QUANTITIES_MUTATION, payload)
     result = data["inventorySetQuantities"]
@@ -171,7 +178,8 @@ def push_delta(client, location_id: str, batch: list[dict]) -> list[dict]:
                 }
                 for r in batch
             ],
-        }
+        },
+        "key": str(uuid.uuid4()),
     }
     data = client.graphql(ADJUST_QUANTITIES_MUTATION, payload)
     result = data["inventoryAdjustQuantities"]

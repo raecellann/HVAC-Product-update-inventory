@@ -1,4 +1,5 @@
 import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtFile, fmtDiff, fmtDateTime, fmtRelative, sleep } from "./api.js";
+import { donut, stackedBar } from "./charts.js";
 
 const runId = getIdFromUrl();
 
@@ -23,6 +24,8 @@ async function init() {
     cache_refresh: "Product list refresh",
     preview_prices: "Price preview",
     apply_prices: "Prices updated",
+    preview_both: "Inventory + price preview",
+    apply_both: "Inventory + prices updated",
   }[run.kind] || capitalize(run.kind);
   document.getElementById("summary-title").textContent = `${kindLabel} #${run.id}`;
   const when = fmtDateTime(run.created_at);
@@ -34,6 +37,7 @@ async function init() {
   renderAlerts(run);
   renderCounts(run);
   renderProgress(run);
+  renderCharts(run);
   renderTable(run);
 
   if (run.status === "running") {
@@ -58,6 +62,7 @@ async function watchProgress() {
       // Done — re-render everything, including counts and the detail table.
       renderAlerts(fresh);
       renderCounts(fresh);
+      renderCharts(fresh);
       renderTable(fresh);
       return;
     }
@@ -111,13 +116,25 @@ function renderCounts(run) {
       [c.blank_sku_count, "blank SKUs"],
       [c.untracked_count, "not tracked"],
     ];
+  } else if (run.kind === "preview_both") {
+    const inv = c.inventory || {};
+    const prices = c.prices;
+    cells = [
+      [inv.excel_rows,  "rows in file"],
+      [inv.matched,     "matched (inventory)"],
+      [inv.will_change, "inventory changes"],
+    ];
+    if (prices) {
+      cells.push([prices.matched,     "matched (prices)"]);
+      cells.push([prices.will_change, "price changes"]);
+    }
   } else {
     cells = [
       [c.excel_rows, "rows in file"],
       [c.matched, "matched"],
       [c.will_change, "would change"],
     ];
-    if (run.kind === "apply" || run.kind === "apply_prices") {
+    if (run.kind === "apply" || run.kind === "apply_prices" || run.kind === "apply_both") {
       cells.push([run.pushed, "pushed to Shopify"]);
       cells.push([run.user_errors, "errors"]);
     }
@@ -127,9 +144,100 @@ function renderCounts(run) {
     .join("");
 }
 
+async function renderCharts(run) {
+  const card = document.getElementById("run-charts-card");
+  const title = document.getElementById("run-charts-title");
+  const subtitle = document.getElementById("run-charts-subtitle");
+  const primary = document.getElementById("run-chart-primary");
+  const secondary = document.getElementById("run-chart-secondary");
+  if (!card || !primary) return;
+  if (run.status === "running") {
+    card.classList.add("hidden");
+    return;
+  }
+
+  const c = run.counts || {};
+
+  if (run.kind === "cache_refresh") {
+    const total = Number(c.sku_count) || 0;
+    const dup = Number(c.duplicate_count) || 0;
+    const blank = Number(c.blank_sku_count) || 0;
+    const untracked = Number(c.untracked_count) || 0;
+    const clean = Math.max(0, total - dup - blank - untracked);
+    const segs = [
+      { label: "Ready to sync", value: clean,     color: "#059669" },
+      { label: "Not tracked",   value: untracked, color: "#6b21a8" },
+      { label: "Blank SKU",     value: blank,     color: "#64748b" },
+      { label: "Duplicate SKU", value: dup,       color: "#d97706" },
+    ];
+    if (!segs.some(s => s.value > 0)) return;
+    title.textContent = "Product list at a glance";
+    subtitle.textContent = "How the current Shopify catalog breaks down.";
+    primary.innerHTML = donut({ segments: segs, title: "Products" });
+    secondary.innerHTML = "";
+    card.classList.remove("hidden");
+    return;
+  }
+
+  // preview / apply / preview_prices / apply_prices / preview_both / apply_both
+  let agg;
+  try {
+    const applyKinds = new Set(["apply", "apply_prices", "apply_both"]);
+    const aggRunId = applyKinds.has(run.kind) && run.parent_run_id
+      ? run.parent_run_id : run.id;
+    agg = await apiGet(`/api/run/${aggRunId}/aggregates`);
+  } catch {
+    return;
+  }
+  const mb = agg.match_breakdown || {};
+  const cd = agg.change_direction || {};
+  const matchSegs = [
+    { label: "Matched",   value: mb.matched || 0,   color: "#059669" },
+    { label: "Unmatched", value: mb.unmatched || 0, color: "#64748b" },
+    { label: "Bad qty",   value: mb.bad_qty || 0,   color: "#b91c1c" },
+    { label: "Duplicate", value: mb.duplicate || 0, color: "#d97706" },
+    { label: "Untracked", value: mb.untracked || 0, color: "#6b21a8" },
+  ];
+  const isPrice = run.kind === "preview_prices" || run.kind === "apply_prices";
+  const dirSegs = isPrice ? [
+    { label: "Price up",   value: cd.up || 0,        color: "#059669" },
+    { label: "Price down", value: cd.down || 0,      color: "#d97706" },
+    { label: "No change",  value: cd.no_change || 0, color: "#94a3b8" },
+  ] : [
+    { label: "Going up",   value: cd.up || 0,        color: "#059669" },
+    { label: "Going down", value: cd.down || 0,      color: "#d97706" },
+    { label: "To zero",    value: cd.to_zero || 0,   color: "#b91c1c" },
+    { label: "No change",  value: cd.no_change || 0, color: "#94a3b8" },
+  ];
+  if (!matchSegs.some(s => s.value > 0) && !dirSegs.some(s => s.value > 0)) return;
+
+  title.textContent = "At a glance";
+  subtitle.textContent = isPrice
+    ? "How SKUs in the file match Shopify, and which way prices move."
+    : "How SKUs in the file match Shopify, and which way stock moves.";
+  primary.innerHTML = donut({ segments: matchSegs, title: "SKUs in file" });
+  secondary.innerHTML = stackedBar({
+    segments: dirSegs,
+    title: isPrice ? "Price changes" : "Stock changes",
+  });
+  card.classList.remove("hidden");
+}
+
 function renderTable(run) {
   // Show the before/after table for preview/apply runs that still have detail files.
   if (run.kind === "cache_refresh") return;
+
+  // Combined runs have two tables — link to the dedicated page instead of
+  // trying to cram both into the single-table layout here.
+  if (run.kind === "preview_both" || run.kind === "apply_both") {
+    const previewId = run.kind === "apply_both" && run.parent_run_id
+      ? run.parent_run_id : runId;
+    document.getElementById("alerts").insertAdjacentHTML(
+      "beforeend",
+      `<p class="muted"><a class="btn-link" href="/preview-both.html?id=${previewId}">See the full inventory + price preview →</a></p>`
+    );
+    return;
+  }
 
   // For apply runs, detail lives on the parent preview run.
   const isApply = run.kind === "apply" || run.kind === "apply_prices";

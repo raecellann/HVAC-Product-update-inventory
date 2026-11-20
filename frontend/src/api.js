@@ -49,6 +49,8 @@ export function fmtKind(kind) {
     cache_refresh: "Product list refresh",
     preview_prices: "Price preview",
     apply_prices: "Prices updated",
+    preview_both: "Inventory + price preview",
+    apply_both: "Inventory + prices updated",
   };
   const label = labels[kind] || kind || "";
   return `<span class="pill pill--kind pill--kind-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
@@ -225,18 +227,25 @@ export function renderRunsTable(runs, mountEl) {
   const rows = runs.map(r => {
     const counts = r.counts || {};
     let detail;
-    if (r.kind === "apply" || r.kind === "apply_prices") {
+    if (r.kind === "apply" || r.kind === "apply_prices" || r.kind === "apply_both") {
       detail = `pushed ${r.pushed || 0}${r.user_errors ? `, ${r.user_errors} errors` : ""}`;
     } else if (r.kind === "cache_refresh") {
       detail = `${counts.sku_count || 0} products`;
     } else if (r.kind === "preview_prices") {
       detail = `${counts.matched || 0} matched · ${counts.will_change || 0} price changes`;
+    } else if (r.kind === "preview_both") {
+      const invMatched = (counts.inventory || {}).matched || 0;
+      const invChg = (counts.inventory || {}).will_change || 0;
+      const priceChg = (counts.prices || {}).will_change || 0;
+      detail = `${invMatched} matched · ${invChg} qty, ${priceChg} price changes`;
     } else {
       detail = `${counts.matched || 0} matched · ${counts.will_change || 0} changes`;
     }
     const viewHref = r.kind === "preview_prices"
       ? `/preview-prices.html?id=${r.id}`
-      : `/run.html?id=${r.id}`;
+      : r.kind === "preview_both"
+        ? `/preview-both.html?id=${r.id}`
+        : `/run.html?id=${r.id}`;
     return `
       <tr>
         <td>
