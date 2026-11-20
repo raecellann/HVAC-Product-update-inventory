@@ -30,6 +30,7 @@ from update_prices import (
     push_price_batches,
     read_price_excel,
     start_price_bulk_query,
+    stream_match_price_rows,
     wait_for_bulk as price_wait_for_bulk,
 )
 import compare_inventory as cmp_mod
@@ -241,19 +242,19 @@ def preview_prices_job(
     history.set_status(run_id, "running")
 
     try:
-        progress(0, 0, "Reading Excel")
-        rows = read_price_excel(upload_path, cfg.sku_column, cfg.price_column)
-        excel_row_count = len(rows)
-
         progress(0, 0, "Loading product list")
         cache = load_sku_cache()
         sku_map: dict[str, dict] = cache["skus"]
 
-        progress(0, 0, "Matching SKUs")
-        match = match_price_rows(rows, cache)
-        # Big list of raw Excel dicts — not needed after matching. Free it
-        # before we download the Shopify bulk result, which can be ~100 MB.
-        del rows
+        d = run_dir(run_id)
+        progress(0, 0, "Reading Excel and matching SKUs")
+        # Stream-match instead of materializing all Excel rows. Peak memory is
+        # proportional to matched rows (~70k), not the Excel row count (1M+).
+        stream_result = stream_match_price_rows(
+            upload_path, cfg.sku_column, cfg.price_column, cache,
+            problems_csv_path=d / "problems.csv",
+        )
+        matched_rows = stream_result["matched"]
 
         progress(0, 0, "Fetching current Shopify prices (this takes a minute)")
         client = client_factory(cfg)
@@ -266,7 +267,7 @@ def preview_prices_job(
         progress(0, 0, "Building preview")
         preview_rows: list[dict] = []
         will_change = 0
-        for m in match.matched:
+        for m in matched_rows:
             sku_lc = m["sku"].lower()
             cache_hit = sku_map.get(sku_lc, {})
             title = cache_hit.get("title", "")
@@ -292,17 +293,15 @@ def preview_prices_job(
                 "variant_id": m["variant_id"],
             })
 
-        d = run_dir(run_id)
         (d / "preview.json").write_text(json.dumps(preview_rows), encoding="utf-8")
-        _write_price_problems_csv(d / "problems.csv", match)
 
         counts = {
-            "excel_rows": excel_row_count,
-            "matched": len(match.matched),
+            "excel_rows": stream_result["excel_row_count"],
+            "matched": len(matched_rows),
             "will_change": will_change,
-            "unmatched": len(match.unmatched),
-            "bad_price": len(match.bad_price),
-            "duplicate": len(match.duplicate_hits),
+            "unmatched": stream_result["unmatched_count"],
+            "bad_price": stream_result["bad_price_count"],
+            "duplicate": stream_result["duplicate_count"],
         }
 
         history.record_counts(run_id, counts)

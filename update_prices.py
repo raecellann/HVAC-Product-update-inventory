@@ -6,6 +6,7 @@ that mutation is per-product.
 """
 from __future__ import annotations
 
+import csv
 import logging
 import threading
 import time
@@ -167,6 +168,149 @@ class PriceMatchResult:
 class PricePushResult:
     pushed: int = 0
     user_errors: list[dict] = field(default_factory=list)
+
+
+def stream_match_price_rows(
+    path: Path,
+    sku_col: str,
+    price_col: str,
+    cache: dict,
+    problems_csv_path: Path | None = None,
+    sample_cap: int = 1000,
+) -> dict:
+    """Read Excel row-by-row and classify against the SKU cache in one pass.
+
+    Peak memory is O(unique matched SKUs), not O(total Excel rows). This is
+    what makes huge supplier catalogs (1M+ rows, 70k matched) fit in 512 MB.
+
+    Problem rows (unmatched / bad price / duplicate) are streamed to a CSV
+    as they appear, capped at `sample_cap` per category so the CSV stays
+    small even when 900k+ rows are unmatched.
+
+    Returns a dict with:
+      matched: list of {sku, variant_id, new_price, row} — deduped by SKU
+      excel_row_count, unmatched_count, bad_price_count, duplicate_count
+    """
+    sku_map: dict[str, dict] = cache["skus"]
+    dup_skus: dict[str, list] = cache.get("duplicate_skus", {})
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    try:
+        header = next(rows_iter)
+    except StopIteration:
+        wb.close()
+        return {
+            "matched": [], "excel_row_count": 0,
+            "unmatched_count": 0, "bad_price_count": 0, "duplicate_count": 0,
+        }
+
+    header_lc = [(str(h).strip().lower() if h is not None else "") for h in header]
+
+    def find_col(name: str) -> int | None:
+        name_lc = name.strip().lower()
+        return header_lc.index(name_lc) if name_lc in header_lc else None
+
+    sku_idx = find_col(sku_col)
+    price_idx = find_col(price_col)
+    if sku_idx is None:
+        wb.close()
+        raise ValueError(f"SKU column '{sku_col}' not found. Header row: {header}")
+    if price_idx is None:
+        wb.close()
+        raise ValueError(f"Price column '{price_col}' not found. Header row: {header}")
+
+    # Dedupe matched rows by SKU — if the same SKU appears multiple times,
+    # last one wins. This also keeps the matched list bounded by the SKU
+    # catalog size (~70k), not the Excel row count.
+    matched_by_sku: dict[str, dict] = {}
+    excel_row_count = 0
+    unmatched_count = 0
+    bad_price_count = 0
+    duplicate_count = 0
+    samples = {"unmatched": 0, "bad_price": 0, "duplicate_sku": 0}
+
+    csv_file = None
+    csv_writer = None
+    if problems_csv_path is not None:
+        csv_file = problems_csv_path.open("w", newline="", encoding="utf-8")
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(["category", "row", "sku", "price_raw", "reason"])
+
+    def record_problem(category: str, row: int, sku: str, price_raw, reason: str) -> None:
+        if csv_writer and samples[category] < sample_cap:
+            csv_writer.writerow([category, row, sku, price_raw, reason])
+            samples[category] += 1
+
+    BLANK_RUN_LIMIT = 2000
+    blank_run = 0
+    try:
+        for i, row in enumerate(rows_iter, start=2):
+            if row is None:
+                blank_run += 1
+                if blank_run >= BLANK_RUN_LIMIT:
+                    break
+                continue
+            sku_val = row[sku_idx] if sku_idx < len(row) else None
+            price_val = row[price_idx] if price_idx < len(row) else None
+            if sku_val is None and price_val is None:
+                blank_run += 1
+                if blank_run >= BLANK_RUN_LIMIT:
+                    break
+                continue
+            blank_run = 0
+            excel_row_count += 1
+
+            sku = (str(sku_val).strip() if sku_val is not None else "")
+            key = sku.lower()
+            if not key:
+                bad_price_count += 1
+                record_problem("bad_price", i, sku, price_val, "blank SKU")
+                continue
+
+            price_str = coerce_price(price_val)
+            if price_str is None:
+                bad_price_count += 1
+                record_problem("bad_price", i, sku, price_val, f"bad price: {price_val!r}")
+                continue
+
+            if key in dup_skus:
+                duplicate_count += 1
+                record_problem("duplicate_sku", i, sku, price_val,
+                               "SKU assigned to multiple variants in Shopify")
+                continue
+
+            hit = sku_map.get(key)
+            if not hit:
+                unmatched_count += 1
+                record_problem("unmatched", i, sku, price_val, "")
+                continue
+
+            matched_by_sku[key] = {
+                "sku": sku,
+                "variant_id": hit["variant_id"],
+                "new_price": price_str,
+                "row": i,
+            }
+    finally:
+        wb.close()
+        if csv_file is not None:
+            csv_file.close()
+            # Nothing written beyond the header → remove the empty CSV.
+            if all(v == 0 for v in samples.values()):
+                try:
+                    problems_csv_path.unlink()
+                except OSError:
+                    pass
+
+    return {
+        "matched": list(matched_by_sku.values()),
+        "excel_row_count": excel_row_count,
+        "unmatched_count": unmatched_count,
+        "bad_price_count": bad_price_count,
+        "duplicate_count": duplicate_count,
+    }
 
 
 def match_price_rows(rows: list[dict], cache: dict) -> PriceMatchResult:
