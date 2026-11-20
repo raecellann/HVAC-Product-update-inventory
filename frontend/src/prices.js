@@ -8,6 +8,10 @@ async function init() {
   await Promise.all([loadDevBanner(), loadRuns()]);
   wireFilePicker();
   wireUpload();
+  setInterval(() => { if (!document.hidden) loadRuns(); }, 10000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) loadRuns();
+  });
 }
 
 async function loadDevBanner() {

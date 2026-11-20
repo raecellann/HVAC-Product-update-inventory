@@ -10,6 +10,20 @@ async function init() {
   wireFilePicker();
   wireUpload();
   wireCacheRefresh();
+  // Keep the dashboard current without manual refresh — poll every 10s.
+  // Pauses while the tab is hidden so we don't burn requests in the background.
+  startAutoRefresh();
+}
+
+function startAutoRefresh() {
+  const tick = async () => {
+    if (document.hidden) return;
+    await Promise.all([loadRuns(), loadCache()]);
+  };
+  setInterval(tick, 10000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) tick();
+  });
 }
 
 async function loadCharts() {
@@ -75,6 +89,15 @@ function wireFilePicker() {
   });
 }
 
+async function isCacheRebuildRunning() {
+  try {
+    const data = await apiGet("/api/runs?limit=5");
+    return (data.runs || []).some(r => r.kind === "cache_refresh" && r.status === "running");
+  } catch {
+    return false;
+  }
+}
+
 async function loadDevBanner() {
   try {
     const f = await apiGet("/api/dev/flags");
@@ -87,7 +110,12 @@ async function loadCache() {
   try {
     const meta = await apiGet("/api/cache/status");
     if (!meta || !meta.refreshed_at) {
-      el.innerHTML = '<div class="alert warn">The product list has never been built. Press "Refresh product list" before uploading a file.</div>';
+      // On a fresh deploy the server kicks off a rebuild automatically.
+      // If one's in flight, tell the user — don't ask them to press the button.
+      const rebuilding = await isCacheRebuildRunning();
+      el.innerHTML = rebuilding
+        ? '<div class="alert">Product list is being built automatically from Shopify. This takes a minute or two — you can leave this page open.</div>'
+        : '<div class="alert warn">The product list has never been built. Press "Refresh product list" before uploading a file.</div>';
       return;
     }
     const staleNote = meta.is_stale
