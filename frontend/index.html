@@ -12,8 +12,7 @@
     <div class="wrap">
       <a href="/" class="brand">HVAC Inventory</a>
       <nav>
-        <a href="/">Update inventory + prices</a>
-        <a href="/prices.html">Update prices only</a>
+        <a href="/">Dashboard</a>
         <a href="/history.html">Latest changes</a>
       </nav>
     </div>
@@ -25,7 +24,7 @@
 
     <section class="card">
       <h2>Update inventory and prices</h2>
-      <p>Upload today's supplier Excel file. The site shows what will change before anything is sent to Shopify. If the file has both quantity and price columns, you'll preview and apply both in one go. If it only has quantities, prices are skipped automatically.</p>
+      <p>Upload today's supplier Excel file. The site shows what will change before anything is sent to Shopify. After you pick a file, choose whether to update quantities, prices, or both.</p>
 
       <div id="busy-banner" class="alert warn hidden">
         A job is currently running. Please wait for it to finish.
@@ -41,6 +40,40 @@
       </form>
       <div id="upload-status" class="status"></div>
     </section>
+
+    <div id="mode-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="mode-modal-title">
+      <div class="modal-dialog">
+        <h3 id="mode-modal-title">What do you want to update?</h3>
+        <p class="muted">The file will be uploaded once; the system will only run the pieces you select.</p>
+        <form id="mode-form">
+          <label class="mode-option">
+            <input type="radio" name="mode" value="both" checked>
+            <div>
+              <strong>Both inventory and prices</strong>
+              <span class="muted">Preview and push quantities + prices in one run.</span>
+            </div>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="inventory">
+            <div>
+              <strong>Inventory only</strong>
+              <span class="muted">Update quantities. Prices in the file are ignored.</span>
+            </div>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="prices">
+            <div>
+              <strong>Prices only</strong>
+              <span class="muted">Update prices. Quantities in the file are ignored.</span>
+            </div>
+          </label>
+          <div class="modal-actions">
+            <button type="button" id="mode-cancel" class="btn">Cancel</button>
+            <button type="submit" class="btn btn-primary">Continue</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <section class="card">
       <h2>Product list</h2>

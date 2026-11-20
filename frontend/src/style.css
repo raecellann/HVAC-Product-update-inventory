@@ -429,3 +429,51 @@ table.preview-table tbody tr:hover { background: var(--color-row-hover); }
 .chart-legend-label { color: var(--color-fg); }
 .chart-legend-value { font-variant-numeric: tabular-nums; font-weight: 500; }
 .chart-legend-pct { font-variant-numeric: tabular-nums; font-size: 12px; }
+
+/* ---------- mode-picker modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 1000;
+}
+.modal-dialog {
+  background: var(--color-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  max-width: 480px;
+  width: 100%;
+  padding: var(--space-5);
+}
+.modal-dialog h3 { margin-top: 0; margin-bottom: var(--space-2); }
+.modal-dialog > p.muted { margin-top: 0; margin-bottom: var(--space-4); }
+.mode-option {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-2);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.mode-option:hover { border-color: var(--color-brand); }
+.mode-option input[type="radio"] { margin-top: 4px; accent-color: var(--color-brand); }
+.mode-option:has(input[type="radio"]:checked) {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+.mode-option > div { display: flex; flex-direction: column; gap: 2px; }
+.mode-option strong { color: var(--color-fg); }
+.mode-option .muted { font-size: 13px; }
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}

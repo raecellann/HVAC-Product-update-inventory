@@ -156,24 +156,73 @@ async function loadRuns() {
   }
 }
 
+// Endpoint + landing page for each mode. The actual upload doesn't happen
+// until the user picks a mode in the modal.
+const MODE_TARGETS = {
+  both:      { endpoint: "/api/upload-both",   previewPage: "/preview-both.html" },
+  inventory: { endpoint: "/api/upload",        previewPage: "/preview.html" },
+  prices:    { endpoint: "/api/upload-prices", previewPage: "/preview-prices.html" },
+};
+
 function wireUpload() {
   const form = document.getElementById("upload-form");
+  const fileInput = document.getElementById("file-input");
   const status = document.getElementById("upload-status");
-  form.addEventListener("submit", async (e) => {
+
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const fd = new FormData(form);
-    renderUploadProgress(status, 0, 0);
-    try {
-      const data = await uploadWithProgress("/api/upload-both", fd,
-        (loaded, total) => renderUploadProgress(status, loaded, total));
-      status.textContent = "Preview is being prepared…";
-      pollJob(data.job_id, status, () => {
-        window.location.href = `/preview-both.html?id=${data.run_id}`;
-      });
-    } catch (e) {
-      status.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
-    }
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    openModeModal((mode) => startUpload(file, mode, status));
   });
+}
+
+function openModeModal(onConfirm) {
+  const modal = document.getElementById("mode-modal");
+  const modeForm = document.getElementById("mode-form");
+  const cancelBtn = document.getElementById("mode-cancel");
+  if (!modal || !modeForm) return;
+
+  modal.classList.remove("hidden");
+  // Default back to "both" so each upload starts from a predictable choice.
+  const bothRadio = modeForm.querySelector('input[name="mode"][value="both"]');
+  if (bothRadio) bothRadio.checked = true;
+
+  const close = () => {
+    modal.classList.add("hidden");
+    modeForm.removeEventListener("submit", onSubmit);
+    cancelBtn.removeEventListener("click", onCancel);
+    modal.removeEventListener("click", onBackdrop);
+  };
+  const onSubmit = (ev) => {
+    ev.preventDefault();
+    const mode = new FormData(modeForm).get("mode");
+    close();
+    onConfirm(mode);
+  };
+  const onCancel = () => close();
+  const onBackdrop = (ev) => { if (ev.target === modal) close(); };
+
+  modeForm.addEventListener("submit", onSubmit);
+  cancelBtn.addEventListener("click", onCancel);
+  modal.addEventListener("click", onBackdrop);
+}
+
+async function startUpload(file, mode, status) {
+  const target = MODE_TARGETS[mode] || MODE_TARGETS.both;
+  const fd = new FormData();
+  fd.append("file", file);
+  renderUploadProgress(status, 0, 0);
+  try {
+    const data = await uploadWithProgress(target.endpoint, fd,
+      (loaded, total) => renderUploadProgress(status, loaded, total));
+    status.textContent = "Preview is being prepared…";
+    pollJob(data.job_id, status, () => {
+      window.location.href = `${target.previewPage}?id=${data.run_id}`;
+    });
+  } catch (e) {
+    status.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
 }
 
 function wireCacheRefresh() {
