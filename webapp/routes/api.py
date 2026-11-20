@@ -39,7 +39,7 @@ def list_runs(limit: int = 50) -> JSONResponse:
 
 
 @router.get("/run/{run_id}")
-def get_run(run_id: int) -> JSONResponse:
+def get_run(run_id: int, runner: JobRunner = Depends(get_runner)) -> JSONResponse:
     run = history.get_run(run_id)
     if run is None:
         raise HTTPException(404, "Run not found.")
@@ -49,6 +49,15 @@ def get_run(run_id: int) -> JSONResponse:
     run["can_apply"] = can_apply
     run["apply_blocked_reason"] = reason
     run["apply_disabled_in_dev"] = _apply_disabled()
+    # If this run is the currently-executing job, surface its in-memory progress
+    # so the run detail page can show a live bar without needing the job_id.
+    if run["status"] == "running":
+        current = runner.current()
+        if current and current.get("run_id") == run_id:
+            run["live"] = {
+                "state": current.get("state"),
+                "progress": current.get("progress") or {},
+            }
     return JSONResponse(run)
 
 

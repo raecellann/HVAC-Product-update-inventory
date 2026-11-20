@@ -1,4 +1,4 @@
-import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtFile, fmtDiff, fmtDateTime, fmtRelative } from "./api.js";
+import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtFile, fmtDiff, fmtDateTime, fmtRelative, sleep } from "./api.js";
 
 const runId = getIdFromUrl();
 
@@ -33,7 +33,59 @@ async function init() {
 
   renderAlerts(run);
   renderCounts(run);
+  renderProgress(run);
   renderTable(run);
+
+  if (run.status === "running") {
+    watchProgress();
+  }
+}
+
+// Poll the run endpoint while the job is executing so the page shows live
+// progress (message + done/total) instead of a frozen "Running" pill.
+async function watchProgress() {
+  while (true) {
+    await sleep(2000);
+    let fresh;
+    try {
+      fresh = await apiGet(`/api/run/${runId}`);
+    } catch {
+      continue; // transient network blip — keep trying
+    }
+    document.getElementById("run-status").innerHTML = fmtStatus(fresh.status);
+    renderProgress(fresh);
+    if (fresh.status !== "running") {
+      // Done — re-render everything, including counts and the detail table.
+      renderAlerts(fresh);
+      renderCounts(fresh);
+      renderTable(fresh);
+      return;
+    }
+  }
+}
+
+function renderProgress(run) {
+  const el = document.getElementById("progress");
+  if (run.status !== "running") {
+    el.classList.add("hidden");
+    el.innerHTML = "";
+    return;
+  }
+  const live = run.live || {};
+  const p = live.progress || {};
+  const msg = p.message || "Working…";
+  const done = Number(p.done) || 0;
+  const total = Number(p.total) || 0;
+  const barAttr = total > 0 ? `value="${done}" max="${total}"` : ""; // indeterminate
+  const sub = total > 0 ? `${done.toLocaleString()} / ${total.toLocaleString()}` : "";
+  el.classList.remove("hidden");
+  el.innerHTML = `
+    <div class="upload-progress">
+      <div class="upload-progress__label">${escapeHtml(msg)}</div>
+      <progress class="upload-progress__bar" ${barAttr}></progress>
+      <div class="upload-progress__bytes muted">${escapeHtml(sub)}</div>
+    </div>
+  `;
 }
 
 function renderAlerts(run) {
