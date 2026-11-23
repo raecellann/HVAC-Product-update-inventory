@@ -4,52 +4,71 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta name="theme-color" content="#0a2d6e">
   <title>Run — HVAC Inventory</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap">
-      <a href="/" class="brand">HVAC Inventory</a>
-      <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history.html">Latest changes</a>
-      </nav>
-    </div>
-  </header>
-  <main class="wrap">
-    <section class="card" id="summary-card">
-      <h2 id="summary-title">Run</h2>
-      <p id="summary-when" class="muted"></p>
-      <p>Status: <span id="run-status"></span></p>
-      <div id="progress" class="hidden"></div>
-      <div id="alerts"></div>
-      <div id="counts" class="counts"></div>
-    </section>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
 
-    <section class="card hidden" id="run-charts-card">
-      <div class="charts-header">
-        <h2 id="run-charts-title">At a glance</h2>
-        <p id="run-charts-subtitle" class="muted"></p>
-      </div>
-      <div class="charts-grid">
-        <div id="run-chart-primary"></div>
-        <div id="run-chart-secondary"></div>
-      </div>
-    </section>
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title" id="page-title">Run</h1>
+            <p class="page-header__subtitle" id="page-sub"></p>
+          </div>
+          <div class="card__actions">
+            <a class="btn" href="/history.html">All runs →</a>
+          </div>
+        </div>
 
-    <section class="card hidden" id="table-card">
-      <h2>Before / after</h2>
-      <input id="search-input" type="search" placeholder="Search SKU or product name">
-      <table class="preview-table">
-        <thead>
-          <tr><th class="col-img"></th><th>SKU</th><th>Product</th><th class="num">Current</th><th class="num">New</th><th class="num">Change</th></tr>
-        </thead>
-        <tbody id="preview-rows"></tbody>
-      </table>
-      <div id="pagination" class="pagination"></div>
-    </section>
-  </main>
+        <div id="stepper-slot"></div>
+
+        <!-- Result panel — success/failure/interrupted -->
+        <div id="result-mount"></div>
+
+        <!-- Job status while running -->
+        <div id="job-status" class="hidden" aria-live="polite"></div>
+
+        <div id="alerts"></div>
+
+        <!-- Counts tiles (reused for cache_refresh as "Product list at a glance") -->
+        <section class="card" id="summary-card" aria-labelledby="summary-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="summary-title">Summary</h2>
+              <p class="card__subtitle" id="summary-sub"></p>
+            </div>
+          </div>
+          <div id="summary-tiles"></div>
+        </section>
+
+        <!-- Before/after table (hidden for cache_refresh and combined runs) -->
+        <section class="card hidden" id="changes-card" aria-labelledby="changes-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="changes-title">Before / after</h2>
+              <p class="card__subtitle">The rows this run touched.</p>
+            </div>
+          </div>
+          <div id="changes-mount"></div>
+        </section>
+
+        <section class="card hidden" id="problems-card" aria-labelledby="problems-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="problems-title">Rows we couldn't use</h2>
+              <p class="card__subtitle">These rows from your file weren't pushed to Shopify.</p>
+            </div>
+          </div>
+          <div id="problems-mount"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
   <script type="module" src="/src/run.js"></script>
 </body>
 </html>

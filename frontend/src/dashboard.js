@@ -1,72 +1,297 @@
 import {
-  handshakeIfKeyInUrl, apiGet, apiPost, pollJob, renderRunsTable, escapeHtml,
-  fmtDateTime, fmtRelative, uploadWithProgress, renderUploadProgress,
+  apiGet, apiPost, escapeHtml,
+  fmtDateTime, fmtRelative,
+  uploadWithProgress, renderRunsTable,
 } from "./api.js";
 import { donut, stackedBar } from "./charts.js";
 
-async function init() {
-  await handshakeIfKeyInUrl();
-  await Promise.all([loadDevBanner(), loadCache(), loadRuns(), loadCharts()]);
-  wireFilePicker();
-  wireUpload();
-  wireCacheRefresh();
-  // Keep the dashboard current without manual refresh — poll every 10s.
-  // Pauses while the tab is hidden so we don't burn requests in the background.
-  startAutoRefresh();
-}
+import { mountShell } from "./components/shell.js";
+import { mountStepper } from "./components/stepper.js";
+import { mountUploadZone } from "./components/uploadZone.js";
+import { mountJobStatus } from "./components/jobStatus.js";
+import { openModeSheet } from "./components/modeSheet.js";
+import { toastError, toastWarning } from "./components/toast.js";
+import { skeletonTable } from "./components/skeleton.js";
+import { icon } from "./components/icons.js";
+import { chartColor } from "./components/tokens.js";
 
-function startAutoRefresh() {
-  const tick = async () => {
-    if (document.hidden) return;
-    await Promise.all([loadRuns(), loadCache()]);
-  };
-  setInterval(tick, 10000);
+// Each mode maps to its upload endpoint + landing page.
+const MODE_TARGETS = {
+  both:      { endpoint: "/api/upload-both",   previewPage: "/preview-both.html" },
+  inventory: { endpoint: "/api/upload",        previewPage: "/preview.html" },
+  prices:    { endpoint: "/api/upload-prices", previewPage: "/preview-prices.html" },
+};
+
+// Page-level refs.
+const refs = {
+  uploadMount: null,
+  uploadSubmit: null,
+  uploadHint: null,
+  uploadStatus: null,
+  jobStatusHost: null,
+  cacheInfo: null,
+  cacheStatus: null,
+  refreshBtn: null,
+  runsList: null,
+  stepperSlot: null,
+};
+
+let jobs = null;
+let uploadZone = null;
+let busyWithJob = false;
+
+async function init() {
+  mountShell({ active: "dashboard" });
+
+  bindRefs();
+  mountStepper(refs.stepperSlot, { current: 1 });
+  jobs = mountJobStatus(refs.jobStatusHost);
+  uploadZone = mountUploadZone(refs.uploadMount, {
+    onPick: onFilePicked,
+    onClear: onFileCleared,
+  });
+
+  refs.uploadSubmit.addEventListener("click", onUploadClick);
+  refs.refreshBtn.addEventListener("click", onCacheRefreshClick);
+
+  await Promise.all([loadCache(), loadRuns(), loadCharts()]);
+
+  // Auto-refresh dashboard data every 10 s while tab is visible.
+  setInterval(() => { if (!document.hidden && !busyWithJob) tick(); }, 10000);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) tick();
+    if (!document.hidden && !busyWithJob) tick();
   });
 }
+
+function bindRefs() {
+  refs.uploadMount   = document.getElementById("upload-mount");
+  refs.uploadSubmit  = document.getElementById("upload-submit");
+  refs.uploadHint    = document.getElementById("upload-hint");
+  refs.uploadStatus  = document.getElementById("upload-status");
+  refs.jobStatusHost = document.getElementById("job-status");
+  refs.cacheInfo     = document.getElementById("cache-info");
+  refs.cacheStatus   = document.getElementById("cache-status");
+  refs.refreshBtn    = document.getElementById("refresh-cache-btn");
+  refs.runsList      = document.getElementById("runs-list");
+  refs.stepperSlot   = document.getElementById("stepper-slot");
+}
+
+function onFilePicked(file) {
+  refs.uploadSubmit.disabled = false;
+  refs.uploadHint.textContent = `Ready: ${file.name}`;
+}
+function onFileCleared() {
+  refs.uploadSubmit.disabled = true;
+  refs.uploadHint.textContent = "Select a file to continue";
+  refs.uploadStatus.textContent = "";
+}
+
+async function onUploadClick() {
+  const file = uploadZone.getFile();
+  if (!file) return;
+
+  let mode;
+  try {
+    mode = await openModeSheet({ opener: refs.uploadSubmit, preselect: preselectedMode() });
+  } catch {
+    return; // cancelled
+  }
+  await startUpload(file, mode);
+}
+
+// When redirected from a "no price/qty column" preview, honour the mode
+// hint so the user doesn't have to re-choose. ?mode=inventory|prices|both
+function preselectedMode() {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const m = (p.get("mode") || "").toLowerCase();
+    if (m === "inventory" || m === "prices" || m === "both") return m;
+  } catch {}
+  return null;
+}
+
+async function startUpload(file, mode) {
+  const target = MODE_TARGETS[mode] || MODE_TARGETS.both;
+  busyWithJob = true;
+  refs.uploadSubmit.disabled = true;
+  jobs.show({ title: "Uploading file", message: "Sending to the server…", done: 0, total: file.size });
+
+  try {
+    const data = await uploadWithProgress(target.endpoint, buildFormData(file),
+      (loaded, total) => jobs.update({
+        title: "Uploading file",
+        message: "Sending to the server…",
+        done: loaded,
+        total: total || file.size,
+      })
+    );
+    jobs.update({ title: "Preparing preview", message: "Reading the file and matching SKUs…", done: 0, total: 0 });
+    // Poll until the preview job finishes, then navigate.
+    pollJobUntilDone(data.job_id, (fresh) => {
+      if (fresh.state === "succeeded") {
+        window.location.href = `${target.previewPage}?id=${data.run_id}`;
+      } else {
+        jobs.hide();
+        busyWithJob = false;
+        refs.uploadSubmit.disabled = false;
+        toastError(fresh.error || "The preview failed. Please try again.");
+      }
+    }, (p) => {
+      jobs.update({
+        title: "Preparing preview",
+        message: p.message || "Working…",
+        done: Number(p.done) || 0,
+        total: Number(p.total) || 0,
+      });
+    });
+  } catch (e) {
+    jobs.hide();
+    busyWithJob = false;
+    refs.uploadSubmit.disabled = false;
+    toastError(e.message || "Upload failed. Please try again.");
+  }
+}
+
+function buildFormData(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return fd;
+}
+
+// ------------------------------------------------------------- cache card ---
+
+async function loadCache() {
+  try {
+    const meta = await apiGet("/api/cache/status");
+    if (!meta || !meta.refreshed_at) {
+      const rebuilding = await isCacheRebuildRunning();
+      refs.cacheInfo.innerHTML = rebuilding
+        ? renderAlert("info", "Building product list", "We're pulling your Shopify catalog for the first time. This takes a minute or two — you can leave this page open.")
+        : renderAlert("warn", "Product list not built yet", "Press \"Refresh product list\" before uploading a file.");
+      return;
+    }
+    const staleNote = meta.is_stale
+      ? renderAlert("warn", "This product list is stale",
+          "It hasn't been refreshed in over a week. Refresh it so new Shopify products are included.")
+      : "";
+    const dupSub = meta.duplicate_count
+      ? `${meta.duplicate_count.toLocaleString()} duplicate SKUs skipped`
+      : "";
+    const when = fmtDateTime(meta.refreshed_at);
+    const rel  = fmtRelative(meta.refreshed_at);
+    refs.cacheInfo.innerHTML = `
+      <div class="stat-row">
+        <div class="stat">
+          <span class="stat-label">Last refreshed</span>
+          <span class="stat-value">${escapeHtml(when)}</span>
+          <span class="stat-sub muted">${escapeHtml(rel)}</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Products known</span>
+          <span class="stat-value">${(meta.sku_count || 0).toLocaleString()}</span>
+          <span class="stat-sub muted">${escapeHtml(dupSub)}</span>
+        </div>
+      </div>
+      ${staleNote}
+    `;
+  } catch (e) {
+    refs.cacheInfo.innerHTML = renderAlert("error", "Couldn't load the product list", e.message);
+  }
+}
+
+async function isCacheRebuildRunning() {
+  try {
+    const data = await apiGet("/api/runs?limit=5");
+    return (data.runs || []).some(r => r.kind === "cache_refresh" && r.status === "running");
+  } catch { return false; }
+}
+
+async function onCacheRefreshClick() {
+  if (busyWithJob) {
+    toastWarning("Another job is running. Please wait for it to finish.");
+    return;
+  }
+  busyWithJob = true;
+  refs.refreshBtn.disabled = true;
+  jobs.show({ title: "Refreshing product list", message: "Fetching your Shopify catalog…", done: 0, total: 0 });
+  try {
+    const data = await apiPost("/api/cache/refresh");
+    pollJobUntilDone(data.job_id, async (fresh) => {
+      busyWithJob = false;
+      refs.refreshBtn.disabled = false;
+      jobs.hide();
+      if (fresh.state === "succeeded") {
+        await Promise.all([loadCache(), loadRuns()]);
+      } else {
+        toastError(fresh.error || "Refresh failed. Please try again.");
+      }
+    }, (p) => {
+      jobs.update({ title: "Refreshing product list", message: p.message || "Working…", done: Number(p.done) || 0, total: Number(p.total) || 0 });
+    });
+  } catch (e) {
+    busyWithJob = false;
+    refs.refreshBtn.disabled = false;
+    jobs.hide();
+    toastError(e.message || "Refresh failed.");
+  }
+}
+
+// ------------------------------------------------------------- runs card ----
+
+async function loadRuns() {
+  try {
+    const data = await apiGet("/api/runs?limit=10");
+    if (!data.runs || data.runs.length === 0) {
+      refs.runsList.innerHTML = renderEmpty(
+        "No runs yet",
+        "After you upload a file, previews and updates will appear here.",
+      );
+      return;
+    }
+    // Reuse the shared table renderer (upgraded globally via style.css).
+    renderRunsTable(data.runs, refs.runsList);
+  } catch (e) {
+    refs.runsList.innerHTML = renderAlert("error", "Couldn't load recent runs", e.message);
+  }
+}
+
+// ------------------------------------------------------------- charts -------
 
 async function loadCharts() {
   let runs;
   try {
     const data = await apiGet("/api/runs?limit=50");
     runs = data.runs || [];
-  } catch {
-    return;
-  }
-  // Pick the most recent preview (successful or not) that still has detail files.
+  } catch { return; }
+
   const run = runs.find(r =>
     r.kind === "preview" && !r.details_purged && (r.counts && r.counts.matched != null)
   );
   if (!run) return;
 
   let agg;
-  try {
-    agg = await apiGet(`/api/run/${run.id}/aggregates`);
-  } catch {
-    return;
-  }
+  try { agg = await apiGet(`/api/run/${run.id}/aggregates`); } catch { return; }
+
   const mb = agg.match_breakdown || {};
   const cd = agg.change_direction || {};
 
   const matchSegs = [
-    { label: "Matched",   value: mb.matched || 0,   color: "#059669" },
-    { label: "Unmatched", value: mb.unmatched || 0, color: "#64748b" },
-    { label: "Bad qty",   value: mb.bad_qty || 0,   color: "#b91c1c" },
-    { label: "Duplicate", value: mb.duplicate || 0, color: "#d97706" },
-    { label: "Untracked", value: mb.untracked || 0, color: "#6b21a8" },
+    { label: "Matched",   value: mb.matched || 0,   color: chartColor("matched") },
+    { label: "Unmatched", value: mb.unmatched || 0, color: chartColor("unmatched") },
+    { label: "Bad qty",   value: mb.bad_qty || 0,   color: chartColor("bad") },
+    { label: "Duplicate", value: mb.duplicate || 0, color: chartColor("duplicate") },
+    { label: "Untracked", value: mb.untracked || 0, color: chartColor("untracked") },
   ];
   const dirSegs = [
-    { label: "Going up",   value: cd.up || 0,        color: "#059669" },
-    { label: "Going down", value: cd.down || 0,      color: "#d97706" },
-    { label: "To zero",    value: cd.to_zero || 0,   color: "#b91c1c" },
-    { label: "No change",  value: cd.no_change || 0, color: "#94a3b8" },
+    { label: "Going up",   value: cd.up || 0,        color: chartColor("up") },
+    { label: "Going down", value: cd.down || 0,      color: chartColor("down") },
+    { label: "To zero",    value: cd.to_zero || 0,   color: chartColor("to-zero") },
+    { label: "No change",  value: cd.no_change || 0, color: chartColor("no-change") },
   ];
-  const hasData = matchSegs.some(s => s.value > 0) || dirSegs.some(s => s.value > 0);
-  if (!hasData) return;
+  if (!matchSegs.some(s => s.value > 0) && !dirSegs.some(s => s.value > 0)) return;
 
   const card = document.getElementById("charts-card");
-  const sub = document.getElementById("charts-subtitle");
+  const sub  = document.getElementById("charts-subtitle");
   const link = `/run.html?id=${run.id}`;
   sub.innerHTML = `
     From <a class="btn-link" href="${link}">${escapeHtml(run.file_name || `run #${run.id}`)}</a>
@@ -80,163 +305,77 @@ async function loadCharts() {
   card.classList.remove("hidden");
 }
 
-function wireFilePicker() {
-  const input = document.getElementById("file-input");
-  const name = document.getElementById("file-picker-name");
-  if (!input || !name) return;
-  input.addEventListener("change", () => {
-    name.textContent = input.files && input.files[0] ? input.files[0].name : "No file chosen";
-  });
+// ------------------------------------------------------------- helpers ------
+
+async function tick() {
+  await Promise.all([loadCache(), loadRuns()]);
 }
 
-async function isCacheRebuildRunning() {
-  try {
-    const data = await apiGet("/api/runs?limit=5");
-    return (data.runs || []).some(r => r.kind === "cache_refresh" && r.status === "running");
-  } catch {
-    return false;
-  }
-}
-
-async function loadDevBanner() {
-  try {
-    const f = await apiGet("/api/dev/flags");
-    if (f.disable_apply) document.getElementById("dev-banner").classList.remove("hidden");
-  } catch {}
-}
-
-async function loadCache() {
-  const el = document.getElementById("cache-info");
-  try {
-    const meta = await apiGet("/api/cache/status");
-    if (!meta || !meta.refreshed_at) {
-      // On a fresh deploy the server kicks off a rebuild automatically.
-      // If one's in flight, tell the user — don't ask them to press the button.
-      const rebuilding = await isCacheRebuildRunning();
-      el.innerHTML = rebuilding
-        ? '<div class="alert">Product list is being built automatically from Shopify. This takes a minute or two — you can leave this page open.</div>'
-        : '<div class="alert warn">The product list has never been built. Press "Refresh product list" before uploading a file.</div>';
-      return;
-    }
-    const staleNote = meta.is_stale
-      ? '<div class="alert warn">The product list hasn\'t been refreshed in over a week. Press "Refresh product list" so new Shopify products are included.</div>'
-      : "";
-    const dupNote = meta.duplicate_count
-      ? ` <span class="muted">(${meta.duplicate_count} duplicate SKUs are skipped.)</span>`
-      : "";
-    const when = fmtDateTime(meta.refreshed_at);
-    const rel = fmtRelative(meta.refreshed_at);
-    el.innerHTML = `
-      <div class="stat-row">
-        <div class="stat">
-          <span class="stat-label">Last refreshed</span>
-          <span class="stat-value">${escapeHtml(when)}</span>
-          <span class="stat-sub muted">${escapeHtml(rel)}</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Products known</span>
-          <span class="stat-value">${(meta.sku_count || 0).toLocaleString()}</span>
-          <span class="stat-sub muted">${dupNote ? escapeHtml(meta.duplicate_count + " duplicate SKUs skipped") : ""}</span>
-        </div>
+function renderAlert(kind, title, body) {
+  const iconHtml = kind === "warn"  ? icon.warn({ size: 18 })
+                 : kind === "error" ? icon.warn({ size: 18 })
+                 : icon.info({ size: 18 });
+  return `
+    <div class="alert ${kind}">
+      <span class="alert__icon">${iconHtml}</span>
+      <div class="alert__body">
+        <div class="alert__title">${escapeHtml(title)}</div>
+        ${body ? `<div>${escapeHtml(body)}</div>` : ""}
       </div>
-      ${staleNote}
-    `;
-  } catch (e) {
-    el.innerHTML = `<p class="err">${escapeHtml(e.message)}</p>`;
-  }
+    </div>
+  `;
 }
 
-async function loadRuns() {
-  const el = document.getElementById("runs-list");
-  try {
-    const data = await apiGet("/api/runs?limit=10");
-    renderRunsTable(data.runs, el);
-  } catch (e) {
-    el.innerHTML = `<p class="err">${escapeHtml(e.message)}</p>`;
-  }
+function renderEmpty(title, sub) {
+  return `
+    <div class="empty">
+      <div class="empty__icon">${icon.inbox({ size: 24 })}</div>
+      <div class="empty__title">${escapeHtml(title)}</div>
+      ${sub ? `<div class="empty__sub">${escapeHtml(sub)}</div>` : ""}
+    </div>
+  `;
 }
 
-// Endpoint + landing page for each mode. The actual upload doesn't happen
-// until the user picks a mode in the modal.
-const MODE_TARGETS = {
-  both:      { endpoint: "/api/upload-both",   previewPage: "/preview-both.html" },
-  inventory: { endpoint: "/api/upload",        previewPage: "/preview.html" },
-  prices:    { endpoint: "/api/upload-prices", previewPage: "/preview-prices.html" },
-};
-
-function wireUpload() {
-  const form = document.getElementById("upload-form");
-  const fileInput = document.getElementById("file-input");
-  const status = document.getElementById("upload-status");
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) return;
-    openModeModal((mode) => startUpload(file, mode, status));
-  });
-}
-
-function openModeModal(onConfirm) {
-  const modal = document.getElementById("mode-modal");
-  const modeForm = document.getElementById("mode-form");
-  const cancelBtn = document.getElementById("mode-cancel");
-  if (!modal || !modeForm) return;
-
-  modal.classList.remove("hidden");
-  // Default back to "both" so each upload starts from a predictable choice.
-  const bothRadio = modeForm.querySelector('input[name="mode"][value="both"]');
-  if (bothRadio) bothRadio.checked = true;
-
-  const close = () => {
-    modal.classList.add("hidden");
-    modeForm.removeEventListener("submit", onSubmit);
-    cancelBtn.removeEventListener("click", onCancel);
-    modal.removeEventListener("click", onBackdrop);
-  };
-  const onSubmit = (ev) => {
-    ev.preventDefault();
-    const mode = new FormData(modeForm).get("mode");
-    close();
-    onConfirm(mode);
-  };
-  const onCancel = () => close();
-  const onBackdrop = (ev) => { if (ev.target === modal) close(); };
-
-  modeForm.addEventListener("submit", onSubmit);
-  cancelBtn.addEventListener("click", onCancel);
-  modal.addEventListener("click", onBackdrop);
-}
-
-async function startUpload(file, mode, status) {
-  const target = MODE_TARGETS[mode] || MODE_TARGETS.both;
-  const fd = new FormData();
-  fd.append("file", file);
-  renderUploadProgress(status, 0, 0);
-  try {
-    const data = await uploadWithProgress(target.endpoint, fd,
-      (loaded, total) => renderUploadProgress(status, loaded, total));
-    status.textContent = "Preview is being prepared…";
-    pollJob(data.job_id, status, () => {
-      window.location.href = `${target.previewPage}?id=${data.run_id}`;
-    });
-  } catch (e) {
-    status.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
-  }
-}
-
-function wireCacheRefresh() {
-  const btn = document.getElementById("refresh-cache-btn");
-  const status = document.getElementById("cache-status");
-  btn.addEventListener("click", async () => {
-    status.textContent = "Starting refresh…";
+// Job poller (replaces pollJob from api.js so we can feed progress into
+// the new JobStatus component instead of writing to a status <span>).
+async function pollJobUntilDone(jobId, onDone, onProgress) {
+  let sawRunning = false;
+  let consec404  = 0;
+  let consecNet  = 0;
+  while (true) {
+    await new Promise(r => setTimeout(r, 2000));
+    let data;
     try {
-      const data = await apiPost("/api/cache/refresh");
-      pollJob(data.job_id, status, () => window.location.reload());
+      data = await apiGet(`/api/status/${jobId}`);
+      consec404 = 0; consecNet = 0;
     } catch (e) {
-      status.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+      if (e.status === 404) {
+        consec404++;
+        if (sawRunning || consec404 >= 3) {
+          jobs.hide();
+          busyWithJob = false;
+          toastError("The job was interrupted — the server likely restarted. Please try again.");
+          return;
+        }
+      } else {
+        consecNet++;
+        if (consecNet >= 10) {
+          jobs.hide();
+          busyWithJob = false;
+          toastError("Lost connection to the server. Please refresh the page.");
+          return;
+        }
+      }
+      continue;
     }
-  });
+    sawRunning = true;
+    if (data.state === "running") {
+      onProgress && onProgress(data.progress || {});
+      continue;
+    }
+    onDone && onDone(data);
+    return;
+  }
 }
 
 init();

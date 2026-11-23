@@ -4,68 +4,86 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Preview — HVAC Inventory</title>
+  <meta name="theme-color" content="#0a2d6e">
+  <title>Review changes — HVAC Inventory</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap">
-      <a href="/" class="brand">HVAC Inventory</a>
-      <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history.html">Latest changes</a>
-      </nav>
-    </div>
-  </header>
-  <main class="wrap">
-    <section class="card" id="summary-card">
-      <h2 id="summary-title">Preview</h2>
-      <p id="summary-when" class="muted"></p>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
 
-      <div id="alerts"></div>
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title" id="page-title">Review inventory + price changes</h1>
+            <p class="page-header__subtitle" id="page-sub"></p>
+          </div>
+          <div class="card__actions">
+            <a class="btn" href="/">← Upload different file</a>
+          </div>
+        </div>
 
-      <div id="section-inventory" class="hidden">
-        <h3>Inventory</h3>
-        <div id="counts-inventory" class="counts"></div>
+        <div id="stepper-slot"></div>
+        <div id="alerts"></div>
+
+        <section class="card" aria-labelledby="summary-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="summary-title">At a glance</h2>
+              <p class="card__subtitle">Counts are over every row in your file, not just the page shown below.</p>
+            </div>
+          </div>
+          <div id="summary-tiles"></div>
+        </section>
+
+        <section class="card" id="inventory-card" aria-labelledby="inv-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="inv-title">Inventory changes</h2>
+              <p class="card__subtitle">Quantities that will change.</p>
+            </div>
+          </div>
+          <div id="inv-mount"></div>
+        </section>
+
+        <section class="card hidden" id="prices-card" aria-labelledby="price-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="price-title">Price changes</h2>
+              <p class="card__subtitle">Prices that will change.</p>
+            </div>
+          </div>
+          <div id="price-mount"></div>
+        </section>
+
+        <section class="card hidden" id="problems-card" aria-labelledby="problems-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="problems-title">Rows we couldn't use</h2>
+              <p class="card__subtitle">These rows from your file weren't pushed to Shopify. Each has a reason you can act on.</p>
+            </div>
+          </div>
+          <div id="problems-mount"></div>
+        </section>
+
+        <div id="push-footer" class="push-footer hidden">
+          <div class="wrap push-footer__inner">
+            <div class="push-footer__copy">
+              <strong id="push-footer-head">Ready to update Shopify</strong>
+              <span class="muted" id="push-footer-sub">You'll see a confirmation with the real numbers first.</span>
+            </div>
+            <div class="push-footer__actions">
+              <button type="button" id="push-btn" class="btn btn--primary btn--lg">
+                Confirm &amp; push to Shopify
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div id="section-prices" class="hidden">
-        <h3>Prices</h3>
-        <div id="counts-prices" class="counts"></div>
-      </div>
+    </main>
+  </div>
 
-      <p id="problems-link" class="hidden"><a id="problems-link-a" href="#">Download inventory problem rows (CSV)</a></p>
-
-      <div id="apply-box" class="apply-box hidden">
-        <button id="apply-btn">Update Shopify (inventory + prices)</button>
-        <p class="muted">Clicking will push inventory and price updates to Shopify in sequence. This cannot be undone.</p>
-      </div>
-      <div id="apply-status" class="status"></div>
-    </section>
-
-    <section class="card hidden" id="inv-table-card">
-      <h2>Inventory changes</h2>
-      <input id="inv-search" type="search" placeholder="Search SKU or product name">
-      <table class="preview-table">
-        <thead>
-          <tr><th class="col-img"></th><th>SKU</th><th>Product</th><th class="num">Current</th><th class="num">New</th><th class="num">Change</th></tr>
-        </thead>
-        <tbody id="inv-rows"></tbody>
-      </table>
-      <div id="inv-pagination" class="pagination"></div>
-    </section>
-
-    <section class="card hidden" id="price-table-card">
-      <h2>Price changes</h2>
-      <input id="price-search" type="search" placeholder="Search SKU or product name">
-      <table class="preview-table">
-        <thead>
-          <tr><th class="col-img"></th><th>SKU</th><th>Product</th><th class="num">Current</th><th class="num">New</th><th class="num">Change</th></tr>
-        </thead>
-        <tbody id="price-rows"></tbody>
-      </table>
-      <div id="price-pagination" class="pagination"></div>
-    </section>
-  </main>
   <script type="module" src="/src/preview-both.js"></script>
 </body>
 </html>

@@ -115,6 +115,7 @@ def preview_job(
         d = run_dir(run_id)
         (d / "preview.json").write_text(json.dumps(preview_rows), encoding="utf-8")
         _write_problems_csv(d / "problems.csv", match)
+        _write_problems_json(d / "problems.json", match_inv=match)
 
         counts = {
             "excel_rows": len(rows),
@@ -133,6 +134,13 @@ def preview_job(
         progress(0, 0, "Preview ready")
 
     except Exception as e:  # noqa: BLE001
+        # Missing-column → surface a stable flag the UI can use to offer a
+        # one-click mode switch, instead of a generic failure message.
+        flag = _classify_column_error(str(e))
+        if flag:
+            history.record_counts(run_id, {"excel_rows": 0, "matched": 0, "will_change": 0}, [flag])
+            history.set_status(run_id, "failed", error=str(e))
+            raise
         log.exception("preview_job failed")
         history.set_status(run_id, "failed", error=str(e))
         raise
@@ -295,6 +303,14 @@ def preview_prices_job(
 
         (d / "preview.json").write_text(json.dumps(preview_rows), encoding="utf-8")
 
+        # Mirror problems.csv into problems.json (capped per kind) so the
+        # frontend can show a "Rows we couldn't use" table without the user
+        # having to download a CSV.
+        _write_stream_problems_json(
+            d / "problems.json",
+            {**stream_result, "problems_csv_path": d / "problems.csv"},
+        )
+
         counts = {
             "excel_rows": stream_result["excel_row_count"],
             "matched": len(matched_rows),
@@ -309,6 +325,11 @@ def preview_prices_job(
         progress(0, 0, "Preview ready")
 
     except Exception as e:  # noqa: BLE001
+        flag = _classify_column_error(str(e))
+        if flag:
+            history.record_counts(run_id, {"excel_rows": 0, "matched": 0, "will_change": 0}, [flag])
+            history.set_status(run_id, "failed", error=str(e))
+            raise
         log.exception("preview_prices_job failed")
         history.set_status(run_id, "failed", error=str(e))
         raise
@@ -457,6 +478,10 @@ def preview_both_job(
 
         (d / "preview.json").write_text(json.dumps(inv_preview), encoding="utf-8")
         _write_problems_csv(d / "problems.csv", match)
+        # Keep a handle so the merged problems.json below can include
+        # inventory rows; the price-half appends to it on success.
+        inv_match_ref = match
+        _write_problems_json(d / "problems.json", match_inv=inv_match_ref)
         inv_flags = warning_flags.compute_warnings(len(rows), len(match.matched), inv_preview)
 
         inv_counts = {
@@ -470,7 +495,8 @@ def preview_both_job(
             "title_mismatches": len(match.title_mismatches),
         }
 
-        # free the intermediate inventory structures before the price pass
+        # free the intermediate inventory structures before the price pass.
+        # inv_match_ref holds the Match so we can merge price problems in.
         del rows, match, shopify_qtys, shopify_images, inv_preview
 
         # ---------- prices half (optional) ----------
@@ -521,6 +547,16 @@ def preview_both_job(
                 })
 
             (d / "preview_prices.json").write_text(json.dumps(price_preview), encoding="utf-8")
+
+            # Rewrite problems.json to include inventory + price problem rows
+            # in one file, so the UI can render a single "Rows we couldn't
+            # use" section for combined runs.
+            _rewrite_problems_json_combined(
+                d / "problems.json",
+                inv_match=inv_match_ref,
+                price_problems_csv=d / "problems_prices.csv",
+            )
+
             price_counts = {
                 "excel_rows": stream_result["excel_row_count"],
                 "matched": len(matched_rows),
@@ -530,8 +566,12 @@ def preview_both_job(
                 "duplicate": stream_result["duplicate_count"],
             }
             has_prices = True
-        except ValueError:
-            # Price column not present in this Excel — carry on with inventory only.
+        except ValueError as ve:
+            # Price column not present in this Excel — carry on with inventory
+            # only. The combined flow degrades gracefully; the UI watches for
+            # the `missing_price_column` warning to offer a mode-switch.
+            if _classify_column_error(str(ve)) == "missing_price_column":
+                inv_flags = list(inv_flags) + ["missing_price_column"]
             log.info("No price column in file — combined preview falls back to inventory-only")
             progress(0, 0, "No price column — inventory only")
 
@@ -558,6 +598,11 @@ def preview_both_job(
         progress(0, 0, "Preview ready")
 
     except Exception as e:  # noqa: BLE001
+        flag = _classify_column_error(str(e))
+        if flag:
+            history.record_counts(run_id, {"excel_rows": 0, "matched": 0, "will_change": 0}, [flag])
+            history.set_status(run_id, "failed", error=str(e))
+            raise
         log.exception("preview_both_job failed")
         history.set_status(run_id, "failed", error=str(e))
         raise
@@ -766,3 +811,191 @@ def _write_price_problems_csv(path: Path, match) -> None:
             w.writerow(["bad_price", r["row"], r["sku"], r["price_raw"], r["reason"]])
         for r in match.duplicate_hits:
             w.writerow(["duplicate_sku", r["row"], r["sku"], r["price_raw"], r["reason"]])
+
+
+# ----- Plain-language "Rows we couldn't use" writer ----------------------
+
+PROBLEMS_CAP_PER_KIND = 500  # keep problems.json small; CSV is the full set
+
+
+def _plain_reason(kind: str, raw: str | None = None) -> str:
+    """Plain-language reason for a problem row — the one the user reads."""
+    if kind == "unmatched":
+        return "No matching SKU in Shopify."
+    if kind == "duplicate_sku":
+        return "This SKU is used by more than one Shopify variant."
+    if kind == "untracked":
+        return "Shopify isn't tracking inventory for this product."
+    if kind == "bad_qty":
+        if raw and "blank sku" in raw.lower():
+            return "The SKU cell was empty."
+        return f"Quantity couldn't be read ({raw})." if raw else "Quantity couldn't be read."
+    if kind == "bad_price":
+        if raw and "blank sku" in raw.lower():
+            return "The SKU cell was empty."
+        return f"Price couldn't be read ({raw})." if raw else "Price couldn't be read."
+    return raw or "This row couldn't be used."
+
+
+def _write_problems_json(path: Path, match_inv=None, match_prices=None) -> None:
+    """Flatten inventory + price problem rows into one JSON array.
+
+    Each row:
+      { sku, title, row, kind, reason, value_raw }
+    Capped at PROBLEMS_CAP_PER_KIND per category so the file stays small
+    — the full set is always available via problems.csv.
+    """
+    out: list[dict] = []
+    truncated_kinds: set[str] = set()
+
+    def add(kind: str, rows, value_field: str, title_field: str = "title"):
+        shown = rows[:PROBLEMS_CAP_PER_KIND]
+        if len(rows) > PROBLEMS_CAP_PER_KIND:
+            truncated_kinds.add(kind)
+        for r in shown:
+            raw = r.get(value_field)
+            out.append({
+                "kind":      kind,
+                "row":       r.get("row"),
+                "sku":       r.get("sku") or "",
+                "title":     r.get(title_field) or r.get("shopify_title") or "",
+                "value_raw": "" if raw is None else str(raw),
+                "reason":    _plain_reason(kind, r.get("reason")),
+            })
+
+    if match_inv is not None:
+        add("unmatched",     match_inv.unmatched,       "qty_raw")
+        add("bad_qty",       match_inv.bad_qty,         "qty_raw")
+        add("duplicate_sku", match_inv.duplicate_hits,  "qty_raw")
+        add("untracked",     match_inv.untracked_hits,  "qty_raw", title_field="shopify_title")
+
+    if match_prices is not None:
+        add("unmatched",     match_prices.unmatched,      "price_raw")
+        add("bad_price",     match_prices.bad_price,      "price_raw")
+        add("duplicate_sku", match_prices.duplicate_hits, "price_raw")
+
+    if not out:
+        return  # nothing to write; UI will show empty state
+
+    path.write_text(json.dumps({
+        "rows": out,
+        "truncated_kinds": sorted(truncated_kinds),
+        "per_kind_cap":    PROBLEMS_CAP_PER_KIND,
+    }), encoding="utf-8")
+
+
+def _write_stream_problems_json(path: Path, stream_result: dict) -> None:
+    """Write problems.json for a price *stream* match.
+
+    The streaming matcher doesn't hold full problem lists in memory — it
+    streams them straight to problems.csv. We read the CSV back (capped) so
+    the JSON endpoint still has a browsable list without re-running the
+    match. If the CSV doesn't exist, we write nothing.
+    """
+    csv_path = stream_result.get("problems_csv_path") if isinstance(stream_result, dict) else None
+    if not csv_path or not Path(csv_path).exists():
+        return
+    rows: list[dict] = []
+    truncated: set[str] = set()
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        # header: category, row, sku, price_raw, reason
+        per_kind: dict[str, int] = {}
+        for r in reader:
+            kind = r.get("category") or ""
+            per_kind[kind] = per_kind.get(kind, 0) + 1
+            if per_kind[kind] > PROBLEMS_CAP_PER_KIND:
+                truncated.add(kind)
+                continue
+            rows.append({
+                "kind":      kind,
+                "row":       int(r["row"]) if r.get("row") else None,
+                "sku":       r.get("sku") or "",
+                "title":     "",
+                "value_raw": r.get("price_raw") or "",
+                "reason":    _plain_reason(kind, r.get("reason")),
+            })
+    if not rows:
+        return
+    path.write_text(json.dumps({
+        "rows": rows,
+        "truncated_kinds": sorted(truncated),
+        "per_kind_cap":    PROBLEMS_CAP_PER_KIND,
+    }), encoding="utf-8")
+
+
+def _rewrite_problems_json_combined(path: Path, *, inv_match, price_problems_csv: Path) -> None:
+    """For preview_both runs: merge inventory + price problem rows into one
+    problems.json. Inventory rows come from the Match object; price rows are
+    read from the streamed problems CSV (capped per kind)."""
+    out: list[dict] = []
+    truncated: set[str] = set()
+
+    def add_inv(kind: str, rows, value_field: str, title_field: str = "title"):
+        shown = rows[:PROBLEMS_CAP_PER_KIND]
+        if len(rows) > PROBLEMS_CAP_PER_KIND:
+            truncated.add(f"inv_{kind}")
+        for r in shown:
+            raw = r.get(value_field)
+            out.append({
+                "kind":      kind,
+                "source":    "inventory",
+                "row":       r.get("row"),
+                "sku":       r.get("sku") or "",
+                "title":     r.get(title_field) or r.get("shopify_title") or "",
+                "value_raw": "" if raw is None else str(raw),
+                "reason":    _plain_reason(kind, r.get("reason")),
+            })
+
+    add_inv("unmatched",     inv_match.unmatched,       "qty_raw")
+    add_inv("bad_qty",       inv_match.bad_qty,         "qty_raw")
+    add_inv("duplicate_sku", inv_match.duplicate_hits,  "qty_raw")
+    add_inv("untracked",     inv_match.untracked_hits,  "qty_raw", title_field="shopify_title")
+
+    if price_problems_csv.exists():
+        with price_problems_csv.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            per_kind: dict[str, int] = {}
+            for r in reader:
+                kind = r.get("category") or ""
+                per_kind[kind] = per_kind.get(kind, 0) + 1
+                if per_kind[kind] > PROBLEMS_CAP_PER_KIND:
+                    truncated.add(f"price_{kind}")
+                    continue
+                out.append({
+                    "kind":      kind,
+                    "source":    "prices",
+                    "row":       int(r["row"]) if r.get("row") else None,
+                    "sku":       r.get("sku") or "",
+                    "title":     "",
+                    "value_raw": r.get("price_raw") or "",
+                    "reason":    _plain_reason(kind, r.get("reason")),
+                })
+
+    if not out:
+        if path.exists():
+            path.unlink()
+        return
+    path.write_text(json.dumps({
+        "rows": out,
+        "truncated_kinds": sorted(truncated),
+        "per_kind_cap":    PROBLEMS_CAP_PER_KIND,
+    }), encoding="utf-8")
+
+
+# ----- missing-column helper --------------------------------------------
+
+def _classify_column_error(msg: str) -> str | None:
+    """Return a stable warning flag when read_* raised 'X column not found'.
+
+    These flags are what the UI watches for to offer a one-click "switch
+    mode" prompt (e.g., "this file has no price column; switch to Inventory").
+    """
+    low = (msg or "").lower()
+    if "qty column" in low and "not found" in low:
+        return "missing_qty_column"
+    if "price column" in low and "not found" in low:
+        return "missing_price_column"
+    if "sku column" in low and "not found" in low:
+        return "missing_sku_column"
+    return None

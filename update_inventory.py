@@ -65,7 +65,19 @@ def pick_input_file() -> Path:
 
 
 def read_excel(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[dict]:
-    """Returns rows with {sku, qty, title, row_number}."""
+    """Read a supplier file into {sku, qty_raw, title, row} dicts.
+
+    Supports Excel (.xlsx / .xlsm) and tab/comma-separated text (.txt / .csv).
+    The function name is historical — callers pass any supported file and
+    we dispatch by extension.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".txt" or suffix == ".csv":
+        return _read_tabular_text(path, sku_col, qty_col, title_col)
+    return _read_xlsx(path, sku_col, qty_col, title_col)
+
+
+def _read_xlsx(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[dict]:
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
 
@@ -111,6 +123,94 @@ def read_excel(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[d
         })
 
     return rows
+
+
+# ------------------------------------------------------------ TSV / text ---
+
+
+def _sniff_delimiter(sample: str) -> str:
+    """Detect the field separator used on the header line.
+
+    Tab wins by default (that's what the HVAC supplier feeds use). If no
+    tab exists, fall back to comma, semicolon, or pipe based on count.
+    Falls back to tab so we fail loud and clear on an unsupported layout.
+    """
+    if "\t" in sample: return "\t"
+    counts = {d: sample.count(d) for d in (",", ";", "|")}
+    best = max(counts, key=counts.get)
+    return best if counts[best] > 0 else "\t"
+
+
+def _open_text(path: Path):
+    """Open a text file guessing the encoding. Supplier .txt files are
+    typically Windows-1252; UTF-8 BOM is also common. Fall back to cp1252
+    with errors='replace' so a stray byte never crashes the whole run."""
+    import csv as _csv  # local to keep import footprint small
+    for enc in ("utf-8-sig", "utf-8", "cp1252"):
+        try:
+            # Peek a few KB to validate the encoding before returning the handle.
+            with open(path, "r", encoding=enc, newline="") as probe:
+                probe.read(4096)
+            return open(path, "r", encoding=enc, newline="")
+        except UnicodeDecodeError:
+            continue
+    return open(path, "r", encoding="cp1252", errors="replace", newline="")
+
+
+def _read_tabular_text(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[dict]:
+    """Streaming TSV / CSV reader. Returns the same shape as _read_xlsx."""
+    import csv as _csv
+    with _open_text(path) as f:
+        head_sample = f.readline()
+        if not head_sample:
+            return []
+        delim = _sniff_delimiter(head_sample)
+        # Rewind so DictReader sees the header too.
+        f.seek(0)
+        reader = _csv.DictReader(f, delimiter=delim)
+        # Normalise header names to lowercase for matching (same as xlsx path).
+        fieldnames = [(h or "").strip() for h in (reader.fieldnames or [])]
+        header_lc = [h.lower() for h in fieldnames]
+
+        def find_col(name: str) -> str | None:
+            nlc = name.strip().lower()
+            if nlc in header_lc:
+                return fieldnames[header_lc.index(nlc)]
+            return None
+
+        sku_key = find_col(sku_col)
+        qty_key = find_col(qty_col)
+        title_key = find_col(title_col)
+
+        if sku_key is None:
+            raise ValueError(f"SKU column '{sku_col}' not found. Header row: {fieldnames}")
+        if qty_key is None:
+            raise ValueError(f"Qty column '{qty_col}' not found. Header row: {fieldnames}")
+
+        rows: list[dict] = []
+        # DictReader starts at line 2 (the first data row); align the row
+        # counter with xlsx (which also starts at 2) so problem CSVs point
+        # at the same physical line in either format.
+        for i, rec in enumerate(reader, start=2):
+            if rec is None:
+                continue
+            sku_raw = (rec.get(sku_key) or "").strip() if sku_key in rec else ""
+            qty_raw = rec.get(qty_key)
+            if qty_raw is not None:
+                qty_raw = qty_raw.strip() if isinstance(qty_raw, str) else qty_raw
+            title_raw = (rec.get(title_key) or "").strip() if title_key and title_key in rec else ""
+
+            if not sku_raw and (qty_raw is None or qty_raw == ""):
+                continue  # blank row
+
+            rows.append({
+                "row": i,
+                "sku": sku_raw,
+                "qty_raw": qty_raw,
+                "title": title_raw,
+            })
+
+        return rows
 
 
 def coerce_qty(raw) -> int | None:
