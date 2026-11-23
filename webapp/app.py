@@ -15,10 +15,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import DATA_DIR, SKU_CACHE_FILE
+from config import DATA_DIR
 
-from . import history, services
-from .deps import get_cfg, get_runner
+from . import history
 from .routes import api as api_routes
 
 logging.basicConfig(
@@ -40,36 +39,7 @@ async def _lifespan(_app: FastAPI):
     purged = history.purge_old_run_details()
     if purged:
         log.info("Purged details for %d old run(s)", purged)
-    _bootstrap_cache_if_missing()
     yield
-
-
-def _bootstrap_cache_if_missing() -> None:
-    """Auto-start a product list rebuild if sku_cache.json is absent.
-
-    First deploys and any case where the cache file got lost (e.g. disk not
-    mounted) would otherwise require the user to click "Refresh product list"
-    before anything else works. Kick it off automatically so the site is
-    usable without that manual step.
-    """
-    if SKU_CACHE_FILE.exists():
-        return
-    try:
-        cfg = get_cfg()
-    except Exception as e:  # noqa: BLE001 — missing env vars, don't crash startup
-        log.warning("Skipping cache bootstrap — config not ready: %s", e)
-        return
-    run_id = history.create_run("cache_refresh")
-    job_id = get_runner().try_start(
-        "cache_refresh",
-        services.cache_refresh_job,
-        run_id=run_id,
-        cfg=cfg,
-    )
-    if job_id is None:
-        log.warning("Cache bootstrap skipped — another job is already running")
-    else:
-        log.info("Cache bootstrap started as run #%d (job %s)", run_id, job_id)
 
 
 def create_app() -> FastAPI:

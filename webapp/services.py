@@ -358,7 +358,13 @@ def apply_prices_job(
         if preview_run is None:
             raise RuntimeError("Preview not found")
         d = RUNS_DIR / str(preview_run_id)
-        preview_path = d / "preview.json"
+        # Combined runs (`preview_both` / `check`) store prices in a
+        # separate file so inventory and price apply paths don't collide.
+        parent_kind = (preview_run.get("kind") or "")
+        if parent_kind in {"preview_both", "check"}:
+            preview_path = d / "preview_prices.json"
+        else:
+            preview_path = d / "preview.json"
         upload_path = d / "upload.xlsx"
         if not preview_path.exists():
             raise RuntimeError("Preview details are no longer available")

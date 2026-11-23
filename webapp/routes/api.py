@@ -7,7 +7,7 @@ import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from config import (
@@ -30,7 +30,33 @@ APPLY_WINDOW_HOURS = 24
 ALLOWED_SUFFIXES = {".xlsx", ".xlsm", ".txt", ".csv"}
 
 
-def _apply_disabled() -> bool:
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_loopback(request: Request | None) -> bool:
+    """True when the request came from the same machine the server runs on.
+
+    We read request.client.host directly (the socket peer), not any
+    forwarded header — a reverse proxy could otherwise spoof localhost. On
+    Render the client host is the edge node's IP, so the env flag still
+    gates production.
+    """
+    if request is None:
+        return False
+    client = request.client
+    host = (client.host if client else "") or ""
+    return host in LOOPBACK_HOSTS
+
+
+def _apply_disabled(request: Request | None = None) -> bool:
+    """True iff push endpoints should refuse.
+
+    DISABLE_APPLY is a production safety flag. Local-machine requests always
+    bypass it — the user asked for push to work on localhost regardless of
+    what's in the environment.
+    """
+    if _is_loopback(request):
+        return False
     return os.environ.get("DISABLE_APPLY", "").strip().lower() in {"1", "true", "yes"}
 
 
@@ -46,7 +72,11 @@ def list_runs(limit: int = 50) -> JSONResponse:
 
 
 @router.get("/run/{run_id}")
-def get_run(run_id: int, runner: JobRunner = Depends(get_runner)) -> JSONResponse:
+def get_run(
+    run_id: int,
+    request: Request,
+    runner: JobRunner = Depends(get_runner),
+) -> JSONResponse:
     run = history.get_run(run_id)
     if run is None:
         raise HTTPException(404, "Run not found.")
@@ -55,7 +85,7 @@ def get_run(run_id: int, runner: JobRunner = Depends(get_runner)) -> JSONRespons
     can_apply, reason = _apply_eligibility(run)
     run["can_apply"] = can_apply
     run["apply_blocked_reason"] = reason
-    run["apply_disabled_in_dev"] = _apply_disabled()
+    run["apply_disabled_in_dev"] = _apply_disabled(request)
     # If this run is the currently-executing job, surface its in-memory progress
     # so the run detail page can show a live bar without needing the job_id.
     if run["status"] == "running":
@@ -69,7 +99,7 @@ def get_run(run_id: int, runner: JobRunner = Depends(get_runner)) -> JSONRespons
 
 
 @router.get("/dev/flags")
-def dev_flags() -> JSONResponse:
+def dev_flags(request: Request) -> JSONResponse:
     """Runtime flags shared between the frontend and the backend.
 
     `disable_apply` toggles the environment badge and disables the push
@@ -77,7 +107,7 @@ def dev_flags() -> JSONResponse:
     backend agree on when the "type PUSH" friction kicks in.
     """
     return JSONResponse({
-        "disable_apply": _apply_disabled(),
+        "disable_apply": _apply_disabled(request),
         "confirm_big_oos_pct":        CONFIRM_BIG_OOS_PCT,
         "confirm_big_price_jump_pct": CONFIRM_BIG_PRICE_JUMP_PCT,
     })
@@ -154,14 +184,15 @@ async def upload_file(
 @router.post("/apply/{preview_run_id}")
 def apply_preview(
     preview_run_id: int,
+    request: Request,
     cfg: Config = Depends(get_cfg),
     runner: JobRunner = Depends(get_runner),
 ) -> JSONResponse:
-    if _apply_disabled():
+    if _apply_disabled(request):
         raise HTTPException(403, "Apply is disabled in dev mode.")
 
     preview = history.get_run(preview_run_id)
-    if preview is None or preview["kind"] != "preview":
+    if preview is None or preview["kind"] not in {"preview", "check"}:
         raise HTTPException(404, "Preview not found.")
     can_apply, reason = _apply_eligibility(preview)
     if not can_apply:
@@ -254,14 +285,15 @@ async def upload_prices(
 @router.post("/apply-prices/{preview_run_id}")
 def apply_prices(
     preview_run_id: int,
+    request: Request,
     cfg: Config = Depends(get_cfg),
     runner: JobRunner = Depends(get_runner),
 ) -> JSONResponse:
-    if _apply_disabled():
+    if _apply_disabled(request):
         raise HTTPException(403, "Apply is disabled in dev mode.")
 
     preview = history.get_run(preview_run_id)
-    if preview is None or preview["kind"] != "preview_prices":
+    if preview is None or preview["kind"] not in {"preview_prices", "check"}:
         raise HTTPException(404, "Price preview not found.")
     can_apply, reason = _apply_eligibility(preview)
     if not can_apply:
@@ -427,10 +459,11 @@ async def upload_check(
 @router.post("/apply-both/{preview_run_id}")
 def apply_both(
     preview_run_id: int,
+    request: Request,
     cfg: Config = Depends(get_cfg),
     runner: JobRunner = Depends(get_runner),
 ) -> JSONResponse:
-    if _apply_disabled():
+    if _apply_disabled(request):
         raise HTTPException(403, "Apply is disabled in dev mode.")
 
     preview = history.get_run(preview_run_id)
