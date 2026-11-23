@@ -357,6 +357,73 @@ async def upload_both(
     return JSONResponse({"run_id": run_id, "job_id": job_id})
 
 
+# ----------------------------------------- read-only check (no apply path)
+
+
+@router.post("/upload-check")
+async def upload_check(
+    file: UploadFile,
+    cfg: Config = Depends(get_cfg),
+    runner: JobRunner = Depends(get_runner),
+) -> JSONResponse:
+    """Comparison-first flow: show how the file differs from current Shopify
+    state. Reuses preview_both_job so the user gets qty + price mismatches
+    for whichever columns the file has. The resulting run has kind='check';
+    the user can review the diffs and *then* opt in to pushing via the same
+    /api/apply-both endpoint (which accepts kind='check' previews).
+    """
+    if runner.is_busy():
+        raise HTTPException(409, "Another job is running. Please wait for it to finish.")
+
+    if not SKU_CACHE_FILE.exists():
+        raise HTTPException(
+            400,
+            "Product list has never been built. "
+            "Press 'Refresh product list' on the dashboard first.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix == ".xls":
+        raise HTTPException(
+            400,
+            "This format (.xls) is not supported. Please save your file as .xlsx or export it as a .txt and try again.",
+        )
+    if suffix not in ALLOWED_SUFFIXES:
+        raise HTTPException(400, "Accepted file types: Excel (.xlsx, .xlsm) or text (.txt, .csv).")
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = history.create_run("check", file_name=file.filename or "")
+    dest_dir = services.run_dir(run_id)
+    dest = dest_dir / "upload.xlsx"
+
+    written = 0
+    with dest.open("wb") as out:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                out.close()
+                dest.unlink(missing_ok=True)
+                history.set_status(run_id, "failed", error="File too large (>100 MB).")
+                raise HTTPException(413, "File too large (>100 MB).")
+            out.write(chunk)
+
+    job_id = runner.try_start(
+        "check",
+        services.preview_both_job,
+        run_id=run_id,
+        upload_path=dest,
+        cfg=cfg,
+    )
+    if job_id is None:
+        history.set_status(run_id, "failed", error="Another job started first.")
+        raise HTTPException(409, "Another job is running. Please wait.")
+
+    return JSONResponse({"run_id": run_id, "job_id": job_id})
+
+
 @router.post("/apply-both/{preview_run_id}")
 def apply_both(
     preview_run_id: int,
@@ -367,7 +434,7 @@ def apply_both(
         raise HTTPException(403, "Apply is disabled in dev mode.")
 
     preview = history.get_run(preview_run_id)
-    if preview is None or preview["kind"] != "preview_both":
+    if preview is None or preview["kind"] not in {"preview_both", "check"}:
         raise HTTPException(404, "Combined preview not found.")
     can_apply, reason = _apply_eligibility(preview)
     if not can_apply:
@@ -816,7 +883,7 @@ def _apply_eligibility(run: dict) -> tuple[bool, str]:
     Centralised so the frontend's apply button and the actual apply endpoint
     agree on the rules.
     """
-    if run["kind"] not in {"preview", "preview_prices", "preview_both"}:
+    if run["kind"] not in {"preview", "preview_prices", "preview_both", "check"}:
         return False, "Only previews can be applied."
     if run["status"] != "succeeded":
         return False, "Preview did not finish successfully."

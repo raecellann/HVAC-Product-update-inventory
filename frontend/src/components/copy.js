@@ -9,6 +9,7 @@ export const KIND_LABEL = {
   apply_prices:    "Prices updated",
   preview_both:    "Inventory + price preview",
   apply_both:      "Inventory + prices updated",
+  check:           "File vs Shopify check",
 };
 
 export const STATUS_LABEL = {
@@ -44,6 +45,24 @@ export const PRICE_FILTERS = [
   { id: "price_up",        label: "Price up" },
   { id: "price_down",      label: "Price down" },
   { id: "price_no_change", label: "No change" },
+];
+
+// Filter labels used by the read-only "check" page. The underlying filter
+// IDs are the same as INVENTORY_FILTERS / PRICE_FILTERS so the backend
+// doesn't need check-specific branches — only the user-facing labels change.
+export const CHECK_INVENTORY_FILTERS = [
+  { id: "all",            label: "All matched" },
+  { id: "changing",       label: "Differs" },
+  { id: "out_of_stock",   label: "Would zero out" },
+  { id: "back_in_stock",  label: "Would come back in stock" },
+  { id: "no_change",      label: "In sync" },
+];
+
+export const CHECK_PRICE_FILTERS = [
+  { id: "all",             label: "All matched" },
+  { id: "price_up",        label: "File is higher" },
+  { id: "price_down",      label: "File is lower" },
+  { id: "price_no_change", label: "In sync" },
 ];
 
 export const PER_PAGE_OPTIONS = [50, 100, 250];

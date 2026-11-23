@@ -51,6 +51,7 @@ export function fmtKind(kind) {
     apply_prices: "Prices updated",
     preview_both: "Inventory + price preview",
     apply_both: "Inventory + prices updated",
+    check: "File vs Shopify check",
   };
   const label = labels[kind] || kind || "";
   return `<span class="pill pill--kind pill--kind-${escapeHtml(kind)}">${escapeHtml(label)}</span>`;
@@ -233,11 +234,12 @@ export function renderRunsTable(runs, mountEl) {
       detail = `${counts.sku_count || 0} products`;
     } else if (r.kind === "preview_prices") {
       detail = `${counts.matched || 0} matched · ${counts.will_change || 0} price changes`;
-    } else if (r.kind === "preview_both") {
+    } else if (r.kind === "preview_both" || r.kind === "check") {
       const invMatched = (counts.inventory || {}).matched || 0;
       const invChg = (counts.inventory || {}).will_change || 0;
       const priceChg = (counts.prices || {}).will_change || 0;
-      detail = `${invMatched} matched · ${invChg} qty, ${priceChg} price changes`;
+      const prefix = r.kind === "check" ? "comparison" : "changes";
+      detail = `${invMatched} matched · ${invChg} qty, ${priceChg} price ${prefix}`;
     } else {
       detail = `${counts.matched || 0} matched · ${counts.will_change || 0} changes`;
     }
@@ -245,7 +247,9 @@ export function renderRunsTable(runs, mountEl) {
       ? `/preview-prices.html?id=${r.id}`
       : r.kind === "preview_both"
         ? `/preview-both.html?id=${r.id}`
-        : `/run.html?id=${r.id}`;
+        : r.kind === "check"
+          ? `/preview-check.html?id=${r.id}`
+          : `/run.html?id=${r.id}`;
     return `
       <tr>
         <td>

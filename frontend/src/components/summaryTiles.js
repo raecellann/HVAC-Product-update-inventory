@@ -74,6 +74,37 @@ export function priceTiles(summary = {}) {
   ];
 }
 
+// Tiles for the read-only "check" page. Caller passes the full aggregates
+// payload (match_breakdown + change_direction + price_direction) so we can
+// compute an "In sync" count without the backend adding a new field.
+export function checkTiles(agg = {}) {
+  const mb = agg.match_breakdown || {};
+  const cd = agg.change_direction || {};
+  const pd = agg.price_direction || {};
+  const hasInventory = Object.keys(cd).length > 0;
+  const hasPrices    = Object.keys(pd).length > 0;
+
+  const invInSync   = cd.no_change || 0;
+  const priceInSync = pd.no_change || 0;
+  const invDiffers =
+    (cd.up || 0) + (cd.down || 0) + (cd.to_zero || 0) + (cd.back_in_stock || 0);
+  const priceDiffers = (pd.up || 0) + (pd.down || 0);
+
+  const tiles = [
+    { id: "matched", label: "Matched in Shopify", value: mb.matched || 0, variant: "brand", icon: icon.arrowRight({ size: 14 }) },
+  ];
+  if (hasInventory) {
+    tiles.push({ id: "inv_in_sync", label: "Inventory in sync", value: invInSync,  variant: "good", icon: icon.trendUp({ size: 14 }),   filterId: "no_change" });
+    tiles.push({ id: "inv_differs", label: "Inventory differs", value: invDiffers, variant: "warn", icon: icon.trendDown({ size: 14 }), filterId: "changing" });
+  }
+  if (hasPrices) {
+    tiles.push({ id: "price_in_sync", label: "Prices in sync", value: priceInSync,  variant: "good", icon: icon.trendUp({ size: 14 }) });
+    tiles.push({ id: "price_differs", label: "Prices differ",  value: priceDiffers, variant: "warn", icon: icon.trendDown({ size: 14 }) });
+  }
+  tiles.push({ id: "not_on_shopify", label: "Not on Shopify", value: mb.unmatched || 0, variant: "bad", icon: icon.warn({ size: 14 }) });
+  return tiles;
+}
+
 export function combinedTiles(summary = {}) {
   return [
     { id: "items_changing",     label: "Items changing",       value: summary.items_changing,     variant: "brand", icon: icon.arrowRight({ size: 14 }) },

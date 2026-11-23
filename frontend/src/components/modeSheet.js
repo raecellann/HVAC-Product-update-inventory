@@ -19,7 +19,7 @@ export function openModeSheet({ opener, preselect } = {}) {
     modal.classList.remove("hidden");
     // Default to the preselected mode if the caller asked for one (e.g. after
     // a missing-column prompt redirect), otherwise "both".
-    const target = (preselect && ["both", "inventory", "prices"].includes(preselect))
+    const target = (preselect && ["both", "inventory", "prices", "check"].includes(preselect))
       ? preselect : "both";
     const radio = form.querySelector(`input[name="mode"][value="${target}"]`);
     if (radio) radio.checked = true;

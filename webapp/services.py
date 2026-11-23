@@ -75,7 +75,10 @@ def preview_job(
 
     try:
         progress(0, 0, "Reading Excel")
-        rows = read_excel(upload_path, cfg.sku_column, cfg.qty_column, cfg.title_column)
+        rows = read_excel(
+            upload_path, cfg.sku_column, cfg.qty_column, cfg.title_column,
+            progress_cb=progress,
+        )
 
         progress(0, 0, "Loading product list")
         cache = load_sku_cache()
@@ -261,6 +264,7 @@ def preview_prices_job(
         stream_result = stream_match_price_rows(
             upload_path, cfg.sku_column, cfg.price_column, cache,
             problems_csv_path=d / "problems.csv",
+            progress_cb=progress,
         )
         matched_rows = stream_result["matched"]
 
@@ -438,7 +442,10 @@ def preview_both_job(
     try:
         # ---------- inventory half ----------
         progress(0, 0, "Reading Excel")
-        rows = read_excel(upload_path, cfg.sku_column, cfg.qty_column, cfg.title_column)
+        rows = read_excel(
+            upload_path, cfg.sku_column, cfg.qty_column, cfg.title_column,
+            progress_cb=progress,
+        )
 
         progress(0, 0, "Loading product list")
         cache = load_sku_cache()
@@ -507,6 +514,7 @@ def preview_both_job(
             stream_result = stream_match_price_rows(
                 upload_path, cfg.sku_column, cfg.price_column, cache,
                 problems_csv_path=d / "problems_prices.csv",
+                progress_cb=progress,
             )
             matched_rows = stream_result["matched"]
 

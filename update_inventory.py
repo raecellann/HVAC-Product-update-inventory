@@ -64,22 +64,50 @@ def pick_input_file() -> Path:
     return max(files, key=lambda p: p.stat().st_mtime)
 
 
-def read_excel(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[dict]:
+def read_excel(
+    path: Path,
+    sku_col: str,
+    qty_col: str,
+    title_col: str,
+    progress_cb=None,
+) -> list[dict]:
     """Read a supplier file into {sku, qty_raw, title, row} dicts.
 
     Supports Excel (.xlsx / .xlsm) and tab/comma-separated text (.txt / .csv).
     The function name is historical — callers pass any supported file and
     we dispatch by extension.
+
+    `progress_cb(done, total, message)` is called periodically so long-running
+    reads can drive a UI progress bar. `total` is 0 when unknown.
     """
     suffix = path.suffix.lower()
     if suffix == ".txt" or suffix == ".csv":
-        return _read_tabular_text(path, sku_col, qty_col, title_col)
-    return _read_xlsx(path, sku_col, qty_col, title_col)
+        return _read_tabular_text(path, sku_col, qty_col, title_col, progress_cb=progress_cb)
+    return _read_xlsx(path, sku_col, qty_col, title_col, progress_cb=progress_cb)
 
 
-def _read_xlsx(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[dict]:
+# How often the Excel reader reports progress — balances responsiveness
+# against lock contention on the shared job-state dict.
+_READ_PROGRESS_STEP_ROWS = 2000
+
+
+def _read_xlsx(
+    path: Path,
+    sku_col: str,
+    qty_col: str,
+    title_col: str,
+    progress_cb=None,
+) -> list[dict]:
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
+
+    # max_row is read from the sheet's <dimension> tag in read_only mode,
+    # so it's cheap when present. It can be None/0 for files without that
+    # tag — fall back to indeterminate progress (total=0).
+    try:
+        total_rows = max(0, (ws.max_row or 0) - 1)  # exclude header
+    except Exception:
+        total_rows = 0
 
     rows_iter = ws.iter_rows(values_only=True)
     try:
@@ -105,7 +133,11 @@ def _read_xlsx(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[d
         raise ValueError(f"Qty column '{qty_col}' not found. Header row: {header}")
 
     rows: list[dict] = []
+    read = 0
     for i, row in enumerate(rows_iter, start=2):
+        read += 1
+        if progress_cb is not None and read % _READ_PROGRESS_STEP_ROWS == 0:
+            progress_cb(read, total_rows, "Reading Excel")
         if row is None:
             continue
         sku = row[sku_idx] if sku_idx < len(row) else None
@@ -122,6 +154,10 @@ def _read_xlsx(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[d
             "title": (str(title).strip() if title is not None else ""),
         })
 
+    if progress_cb is not None:
+        # Final tick with done == total so the bar lands at 100%.
+        final_total = total_rows if total_rows > 0 else read
+        progress_cb(final_total, final_total, "Reading Excel")
     return rows
 
 
@@ -157,7 +193,13 @@ def _open_text(path: Path):
     return open(path, "r", encoding="cp1252", errors="replace", newline="")
 
 
-def _read_tabular_text(path: Path, sku_col: str, qty_col: str, title_col: str) -> list[dict]:
+def _read_tabular_text(
+    path: Path,
+    sku_col: str,
+    qty_col: str,
+    title_col: str,
+    progress_cb=None,
+) -> list[dict]:
     """Streaming TSV / CSV reader. Returns the same shape as _read_xlsx."""
     import csv as _csv
     with _open_text(path) as f:
@@ -188,10 +230,18 @@ def _read_tabular_text(path: Path, sku_col: str, qty_col: str, title_col: str) -
             raise ValueError(f"Qty column '{qty_col}' not found. Header row: {fieldnames}")
 
         rows: list[dict] = []
+        read = 0
         # DictReader starts at line 2 (the first data row); align the row
         # counter with xlsx (which also starts at 2) so problem CSVs point
         # at the same physical line in either format.
         for i, rec in enumerate(reader, start=2):
+            read += 1
+            # Text-mode f.tell() is unreliable inside iteration (OSError in
+            # CPython), so we can't drive a determinate bar from byte
+            # position. Tick row count with total=0 — the UI keeps the
+            # indeterminate animation but updates the "row N" message.
+            if progress_cb is not None and read % _READ_PROGRESS_STEP_ROWS == 0:
+                progress_cb(read, 0, f"Reading file (row {read:,})")
             if rec is None:
                 continue
             sku_raw = (rec.get(sku_key) or "").strip() if sku_key in rec else ""
@@ -210,6 +260,8 @@ def _read_tabular_text(path: Path, sku_col: str, qty_col: str, title_col: str) -
                 "title": title_raw,
             })
 
+        if progress_cb is not None:
+            progress_cb(len(rows), len(rows), "Reading file")
         return rows
 
 

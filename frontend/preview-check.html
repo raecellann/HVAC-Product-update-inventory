@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta name="theme-color" content="#0a2d6e">
+  <title>File check — HVAC Inventory</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
+
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title" id="page-title">Check results — your file vs Shopify</h1>
+            <p class="page-header__subtitle" id="page-sub"></p>
+          </div>
+          <div class="card__actions">
+            <a class="btn" href="/">← Check another file</a>
+          </div>
+        </div>
+
+        <div id="alerts"></div>
+
+        <section class="card" aria-labelledby="summary-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="summary-title">At a glance</h2>
+              <p class="card__subtitle">How your file compares to Shopify right now. Nothing will be pushed.</p>
+            </div>
+          </div>
+          <div id="summary-tiles"></div>
+        </section>
+
+        <section class="card" id="inventory-card" aria-labelledby="inv-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="inv-title">Inventory comparison</h2>
+              <p class="card__subtitle">Quantities in your file vs current Shopify stock.</p>
+            </div>
+          </div>
+          <div id="inv-mount"></div>
+        </section>
+
+        <section class="card hidden" id="prices-card" aria-labelledby="price-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="price-title">Price comparison</h2>
+              <p class="card__subtitle">Prices in your file vs current Shopify prices.</p>
+            </div>
+          </div>
+          <div id="price-mount"></div>
+        </section>
+
+        <section class="card hidden" id="problems-card" aria-labelledby="problems-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="problems-title">Rows we couldn't match</h2>
+              <p class="card__subtitle">These rows from your file don't match a Shopify SKU (or have other issues).</p>
+            </div>
+          </div>
+          <div id="problems-mount"></div>
+        </section>
+
+        <div id="push-footer" class="push-footer hidden">
+          <div class="wrap push-footer__inner">
+            <div class="push-footer__copy">
+              <strong id="push-footer-head">Want to push these changes?</strong>
+              <span class="muted" id="push-footer-sub">Nothing is sent until you confirm.</span>
+            </div>
+            <div class="push-footer__actions">
+              <button type="button" id="push-btn" class="btn btn--primary btn--lg">
+                Push changes to Shopify
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/src/preview-check.js"></script>
+</body>
+</html>

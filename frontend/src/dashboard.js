@@ -20,6 +20,7 @@ const MODE_TARGETS = {
   both:      { endpoint: "/api/upload-both",   previewPage: "/preview-both.html" },
   inventory: { endpoint: "/api/upload",        previewPage: "/preview.html" },
   prices:    { endpoint: "/api/upload-prices", previewPage: "/preview-prices.html" },
+  check:     { endpoint: "/api/upload-check",  previewPage: "/preview-check.html" },
 };
 
 // Page-level refs.
@@ -105,7 +106,7 @@ function preselectedMode() {
   try {
     const p = new URLSearchParams(window.location.search);
     const m = (p.get("mode") || "").toLowerCase();
-    if (m === "inventory" || m === "prices" || m === "both") return m;
+    if (m === "inventory" || m === "prices" || m === "both" || m === "check") return m;
   } catch {}
   return null;
 }

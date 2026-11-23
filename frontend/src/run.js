@@ -119,7 +119,7 @@ async function renderSummary(run) {
   let tiles;
   if (run.kind === "preview_prices" || run.kind === "apply_prices") {
     tiles = priceTiles(summary);
-  } else if (run.kind === "preview_both" || run.kind === "apply_both") {
+  } else if (run.kind === "preview_both" || run.kind === "apply_both" || run.kind === "check") {
     tiles = combinedTiles(summary);
   } else {
     tiles = inventoryTiles(summary);
@@ -146,13 +146,41 @@ async function renderSummary(run) {
 function renderDetailTable(run) {
   if (run.kind === "cache_refresh") return;
 
-  // Combined runs link out to the dedicated combined page.
+  // Combined runs link out to the dedicated combined page. An apply_both
+  // might be the child of either a preview_both or a check — fetch the
+  // parent's kind so the link lands on the right page.
   if (run.kind === "preview_both" || run.kind === "apply_both") {
     const previewId = run.kind === "apply_both" && run.parent_run_id ? run.parent_run_id : runId;
+    const label = "Combined preview";
+    const linkText = "Open combined preview →";
+    if (run.kind === "apply_both" && run.parent_run_id) {
+      apiGet(`/api/run/${previewId}`).then(parent => {
+        const href = parent.kind === "check"
+          ? `/preview-check.html?id=${previewId}`
+          : `/preview-both.html?id=${previewId}`;
+        const openLabel = parent.kind === "check"
+          ? "Open check results →"
+          : "Open combined preview →";
+        document.getElementById("alerts").insertAdjacentHTML("beforeend",
+          alertHtml("info", label,
+            `See the full inventory + price tables on the source page.`,
+            `<a class="btn btn--sm" href="${href}">${openLabel}</a>`));
+      }).catch(() => {});
+      return;
+    }
     document.getElementById("alerts").insertAdjacentHTML("beforeend",
-      alertHtml("info", "Combined preview",
+      alertHtml("info", label,
         `See the full inventory + price tables on the combined preview page.`,
-        `<a class="btn btn--sm" href="/preview-both.html?id=${previewId}">Open combined preview →</a>`));
+        `<a class="btn btn--sm" href="/preview-both.html?id=${previewId}">${linkText}</a>`));
+    return;
+  }
+
+  // Check runs always link to the dedicated check page.
+  if (run.kind === "check") {
+    document.getElementById("alerts").insertAdjacentHTML("beforeend",
+      alertHtml("info", "File vs Shopify check",
+        `See the full comparison tables on the dedicated check page.`,
+        `<a class="btn btn--sm" href="/preview-check.html?id=${runId}">Open check results →</a>`));
     return;
   }
 

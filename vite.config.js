@@ -26,6 +26,7 @@ export default defineConfig({
         prices:        resolve(__dirname, "frontend/prices.html"),
         previewPrices: resolve(__dirname, "frontend/preview-prices.html"),
         previewBoth:   resolve(__dirname, "frontend/preview-both.html"),
+        previewCheck:  resolve(__dirname, "frontend/preview-check.html"),
       },
     },
   },

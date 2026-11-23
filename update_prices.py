@@ -177,34 +177,55 @@ def stream_match_price_rows(
     cache: dict,
     problems_csv_path: Path | None = None,
     sample_cap: int = 1000,
+    progress_cb=None,
 ) -> dict:
-    """Read Excel row-by-row and classify against the SKU cache in one pass.
+    """Read a supplier file row-by-row and classify against the SKU cache.
 
-    Peak memory is O(unique matched SKUs), not O(total Excel rows). This is
-    what makes huge supplier catalogs (1M+ rows, 70k matched) fit in 512 MB.
+    Supports Excel (.xlsx / .xlsm) and tab/comma-separated text (.txt / .csv).
+    Peak memory is O(unique matched SKUs), not O(total rows). Problem rows
+    (unmatched / bad price / duplicate) stream to a CSV capped at
+    `sample_cap` per category so the CSV stays small even when the file is
+    dominated by unmatched rows.
 
-    Problem rows (unmatched / bad price / duplicate) are streamed to a CSV
-    as they appear, capped at `sample_cap` per category so the CSV stays
-    small even when 900k+ rows are unmatched.
+    `progress_cb(done, total, message)` is called periodically from the row
+    iterator so the caller can drive a UI progress bar. `total` is 0 when
+    unknown.
 
     Returns a dict with:
       matched: list of {sku, variant_id, new_price, row} — deduped by SKU
       excel_row_count, unmatched_count, bad_price_count, duplicate_count
     """
-    sku_map: dict[str, dict] = cache["skus"]
-    dup_skus: dict[str, list] = cache.get("duplicate_skus", {})
+    suffix = path.suffix.lower()
+    if suffix in {".txt", ".csv"}:
+        row_source = _iter_price_rows_text(path, sku_col, price_col, progress_cb=progress_cb)
+    else:
+        row_source = _iter_price_rows_xlsx(path, sku_col, price_col, progress_cb=progress_cb)
+    return _classify_price_rows(row_source, cache, problems_csv_path, sample_cap)
 
+
+# Throttle how often we tick the progress callback. Matches the inventory
+# reader's cadence so a combined preview advances at the same rate.
+_READ_PROGRESS_STEP_ROWS = 2000
+
+
+def _iter_price_rows_xlsx(path: Path, sku_col: str, price_col: str, progress_cb=None):
+    """Yield (row_number, sku_val, price_val) for an .xlsx/.xlsm file.
+
+    Raises ValueError if a required column is missing — the caller's
+    column-missing handler surfaces this as a graceful mode-switch prompt.
+    """
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
+    try:
+        total_rows = max(0, (ws.max_row or 0) - 1)
+    except Exception:
+        total_rows = 0
     rows_iter = ws.iter_rows(values_only=True)
     try:
         header = next(rows_iter)
     except StopIteration:
         wb.close()
-        return {
-            "matched": [], "excel_row_count": 0,
-            "unmatched_count": 0, "bad_price_count": 0, "duplicate_count": 0,
-        }
+        return
 
     header_lc = [(str(h).strip().lower() if h is not None else "") for h in header]
 
@@ -221,9 +242,104 @@ def stream_match_price_rows(
         wb.close()
         raise ValueError(f"Price column '{price_col}' not found. Header row: {header}")
 
-    # Dedupe matched rows by SKU — if the same SKU appears multiple times,
-    # last one wins. This also keeps the matched list bounded by the SKU
-    # catalog size (~70k), not the Excel row count.
+    BLANK_RUN_LIMIT = 2000
+    blank_run = 0
+    read = 0
+    try:
+        for i, row in enumerate(rows_iter, start=2):
+            read += 1
+            if progress_cb is not None and read % _READ_PROGRESS_STEP_ROWS == 0:
+                progress_cb(read, total_rows, "Reading Excel")
+            if row is None:
+                blank_run += 1
+                if blank_run >= BLANK_RUN_LIMIT:
+                    break
+                continue
+            sku_val = row[sku_idx] if sku_idx < len(row) else None
+            price_val = row[price_idx] if price_idx < len(row) else None
+            if sku_val is None and price_val is None:
+                blank_run += 1
+                if blank_run >= BLANK_RUN_LIMIT:
+                    break
+                continue
+            blank_run = 0
+            yield (i, sku_val, price_val)
+    finally:
+        wb.close()
+        if progress_cb is not None:
+            final_total = total_rows if total_rows > 0 else read
+            progress_cb(final_total, final_total, "Reading Excel")
+
+
+def _iter_price_rows_text(path: Path, sku_col: str, price_col: str, progress_cb=None):
+    """Yield (row_number, sku_val, price_val) for a .txt/.csv file.
+
+    Mirrors the TSV reader on the inventory side so the same supplier .txt
+    works for both halves of a combined preview.
+    """
+    # Local imports keep this module importable even if update_inventory.py's
+    # helpers move; the TSV helpers deliberately live there since the
+    # inventory reader was the first to need them.
+    from update_inventory import _open_text, _sniff_delimiter
+    import csv as _csv
+
+    with _open_text(path) as f:
+        head_sample = f.readline()
+        if not head_sample:
+            return
+        delim = _sniff_delimiter(head_sample)
+        f.seek(0)
+        reader = _csv.DictReader(f, delimiter=delim)
+        fieldnames = [(h or "").strip() for h in (reader.fieldnames or [])]
+        header_lc = [h.lower() for h in fieldnames]
+
+        def find_col(name: str) -> str | None:
+            nlc = name.strip().lower()
+            if nlc in header_lc:
+                return fieldnames[header_lc.index(nlc)]
+            return None
+
+        sku_key = find_col(sku_col)
+        price_key = find_col(price_col)
+        if sku_key is None:
+            raise ValueError(f"SKU column '{sku_col}' not found. Header row: {fieldnames}")
+        if price_key is None:
+            raise ValueError(f"Price column '{price_col}' not found. Header row: {fieldnames}")
+
+        read = 0
+        for i, rec in enumerate(reader, start=2):
+            read += 1
+            # Text-mode f.tell() is unreliable inside iteration (OSError in
+            # CPython), so we tick row counts with total=0 — the bar stays
+            # indeterminate but the "row N" message keeps moving.
+            if progress_cb is not None and read % _READ_PROGRESS_STEP_ROWS == 0:
+                progress_cb(read, 0, f"Reading file (row {read:,})")
+            if rec is None:
+                continue
+            sku_raw = rec.get(sku_key)
+            price_raw = rec.get(price_key)
+            if isinstance(sku_raw, str):
+                sku_raw = sku_raw.strip()
+            if isinstance(price_raw, str):
+                price_raw = price_raw.strip()
+            if (sku_raw in (None, "")) and (price_raw in (None, "")):
+                continue
+            yield (i, sku_raw, price_raw)
+
+        if progress_cb is not None:
+            progress_cb(read, read, "Reading file")
+
+
+def _classify_price_rows(
+    row_source,
+    cache: dict,
+    problems_csv_path: Path | None,
+    sample_cap: int,
+) -> dict:
+    """Shared per-row classification for xlsx and tsv price streams."""
+    sku_map: dict[str, dict] = cache["skus"]
+    dup_skus: dict[str, list] = cache.get("duplicate_skus", {})
+
     matched_by_sku: dict[str, dict] = {}
     excel_row_count = 0
     unmatched_count = 0
@@ -243,25 +359,9 @@ def stream_match_price_rows(
             csv_writer.writerow([category, row, sku, price_raw, reason])
             samples[category] += 1
 
-    BLANK_RUN_LIMIT = 2000
-    blank_run = 0
     try:
-        for i, row in enumerate(rows_iter, start=2):
-            if row is None:
-                blank_run += 1
-                if blank_run >= BLANK_RUN_LIMIT:
-                    break
-                continue
-            sku_val = row[sku_idx] if sku_idx < len(row) else None
-            price_val = row[price_idx] if price_idx < len(row) else None
-            if sku_val is None and price_val is None:
-                blank_run += 1
-                if blank_run >= BLANK_RUN_LIMIT:
-                    break
-                continue
-            blank_run = 0
+        for (i, sku_val, price_val) in row_source:
             excel_row_count += 1
-
             sku = (str(sku_val).strip() if sku_val is not None else "")
             key = sku.lower()
             if not key:
@@ -294,10 +394,8 @@ def stream_match_price_rows(
                 "row": i,
             }
     finally:
-        wb.close()
         if csv_file is not None:
             csv_file.close()
-            # Nothing written beyond the header → remove the empty CSV.
             if all(v == 0 for v in samples.values()):
                 try:
                     problems_csv_path.unlink()
