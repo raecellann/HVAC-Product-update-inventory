@@ -4,49 +4,76 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Price preview — HVAC Inventory</title>
+  <meta name="theme-color" content="#0a2d6e">
+  <title>Review price changes — HVAC Inventory</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap">
-      <a href="/" class="brand">HVAC Inventory</a>
-      <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history.html">Latest changes</a>
-      </nav>
-    </div>
-  </header>
-  <main class="wrap">
-    <section class="card" id="summary-card">
-      <h2 id="summary-title">Price preview</h2>
-      <p id="summary-when" class="muted"></p>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
 
-      <div id="alerts"></div>
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title" id="page-title">Review price changes</h1>
+            <p class="page-header__subtitle" id="page-sub"></p>
+          </div>
+          <div class="card__actions">
+            <a class="btn" href="/">← Upload different file</a>
+          </div>
+        </div>
 
-      <div id="counts" class="counts"></div>
+        <div id="stepper-slot"></div>
+        <div id="alerts"></div>
 
-      <p id="problems-link" class="hidden"><a id="problems-link-a" href="#">Download problem rows as CSV</a></p>
+        <section class="card" aria-labelledby="summary-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="summary-title">At a glance</h2>
+              <p class="card__subtitle">Counts are over every row in your file, not just the page shown below.</p>
+            </div>
+          </div>
+          <div id="summary-tiles"></div>
+        </section>
 
-      <div id="apply-box" class="apply-box hidden">
-        <button id="apply-btn">Update Shopify prices</button>
-        <p class="muted">Clicking will push the new prices to Shopify. This cannot be undone.</p>
+        <section class="card" aria-labelledby="changes-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="changes-title">What will change</h2>
+              <p class="card__subtitle">Filter by change type, search, and sort. Pagination applies across the whole run.</p>
+            </div>
+          </div>
+          <div id="changes-mount"></div>
+        </section>
+
+        <section class="card hidden" id="problems-card" aria-labelledby="problems-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="problems-title">Rows we couldn't use</h2>
+              <p class="card__subtitle">These rows from your file weren't pushed to Shopify. Each has a reason you can act on.</p>
+            </div>
+          </div>
+          <div id="problems-mount"></div>
+        </section>
+
+        <div id="push-footer" class="push-footer hidden">
+          <div class="wrap push-footer__inner">
+            <div class="push-footer__copy">
+              <strong id="push-footer-head">Ready to update Shopify prices</strong>
+              <span class="muted" id="push-footer-sub">You'll see a confirmation with the real numbers first.</span>
+            </div>
+            <div class="push-footer__actions">
+              <button type="button" id="push-btn" class="btn btn--primary btn--lg">
+                Confirm &amp; push to Shopify
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div id="apply-status" class="status"></div>
-    </section>
+    </main>
+  </div>
 
-    <section class="card hidden" id="table-card">
-      <h2>Prices that will change</h2>
-      <input id="search-input" type="search" placeholder="Search SKU or product name">
-      <table class="preview-table">
-        <thead>
-          <tr><th class="col-img"></th><th>SKU</th><th>Product</th><th class="num">Current</th><th class="num">New</th><th class="num">Change</th></tr>
-        </thead>
-        <tbody id="preview-rows"></tbody>
-      </table>
-      <div id="pagination" class="pagination"></div>
-    </section>
-  </main>
   <script type="module" src="/src/preview-prices.js"></script>
 </body>
 </html>

@@ -1,345 +1,237 @@
-import { handshakeIfKeyInUrl, apiGet, getIdFromUrl, escapeHtml, fmtStatus, fmtFile, fmtDiff, fmtDateTime, fmtRelative, sleep } from "./api.js";
-import { donut, stackedBar } from "./charts.js";
+// Run detail — "Result" (step 5) for apply runs, plus a readable view of
+// previews and cache-refresh runs. Reuses the ChangesTable + SummaryTiles
+// components so the result page can't drift from the preview page.
+
+import { apiGet, escapeHtml, fmtDateTime, fmtRelative, fmtFile, getIdFromUrl, sleep } from "./api.js";
+
+import { mountShell }     from "./components/shell.js";
+import { mountStepper }   from "./components/stepper.js";
+import { mountJobStatus } from "./components/jobStatus.js";
+import { mountSummaryTiles, inventoryTiles, priceTiles, combinedTiles } from "./components/summaryTiles.js";
+import { mountChangesTable } from "./components/changesTable.js";
+import { mountProblemsTable } from "./components/problemsTable.js";
+import { renderResultPanel } from "./components/resultPanel.js";
+import { icon } from "./components/icons.js";
+import { INVENTORY_FILTERS, PRICE_FILTERS, KIND_LABEL } from "./components/copy.js";
 
 const runId = getIdFromUrl();
 
+const PREVIEW_KINDS = new Set(["preview", "preview_prices", "preview_both"]);
+const APPLY_KINDS   = new Set(["apply", "apply_prices", "apply_both"]);
+
 async function init() {
-  await handshakeIfKeyInUrl();
+  mountShell({ active: "dashboard" });
   if (!runId) {
-    document.body.innerHTML = '<main class="wrap"><p class="err">Missing run id.</p></main>';
+    document.getElementById("alerts").innerHTML =
+      `<div class="alert error"><span class="alert__icon">${icon.warn({ size: 18 })}</span><div class="alert__body">Missing run id in the URL.</div></div>`;
     return;
   }
 
   let run;
-  try {
-    run = await apiGet(`/api/run/${runId}`);
-  } catch (e) {
-    document.getElementById("alerts").innerHTML = `<div class="alert error">${escapeHtml(e.message)}</div>`;
+  try { run = await apiGet(`/api/run/${runId}`); }
+  catch (e) {
+    document.getElementById("alerts").innerHTML =
+      `<div class="alert error"><span class="alert__icon">${icon.warn({ size: 18 })}</span><div class="alert__body">${escapeHtml(e.message)}</div></div>`;
     return;
   }
 
-  const kindLabel = {
-    preview: "Inventory preview",
-    apply: "Inventory updated",
-    cache_refresh: "Product list refresh",
-    preview_prices: "Price preview",
-    apply_prices: "Prices updated",
-    preview_both: "Inventory + price preview",
-    apply_both: "Inventory + prices updated",
-  }[run.kind] || capitalize(run.kind);
-  document.getElementById("summary-title").textContent = `${kindLabel} #${run.id}`;
-  const when = fmtDateTime(run.created_at);
-  const rel = fmtRelative(run.created_at);
-  document.getElementById("summary-when").innerHTML =
-    `${escapeHtml(when)} <span class="muted">· ${escapeHtml(rel)}</span> · ${fmtFile(run)}`;
-  document.getElementById("run-status").innerHTML = fmtStatus(run.status);
+  renderHeader(run);
+
+  // Stepper is only meaningful for workflow-related runs.
+  if (PREVIEW_KINDS.has(run.kind)) {
+    mountStepper(document.getElementById("stepper-slot"), { current: 3 });
+  } else if (APPLY_KINDS.has(run.kind)) {
+    mountStepper(document.getElementById("stepper-slot"), { current: 5 });
+  }
+
+  // Result panel for apply runs that are done.
+  if (APPLY_KINDS.has(run.kind) && run.status !== "running" && run.status !== "queued") {
+    document.getElementById("result-mount").innerHTML = renderResultPanel({
+      status: run.status,
+      kind: run.kind,
+      pushed: run.pushed || 0,
+      errors: run.user_errors || 0,
+    });
+  }
+
+  // Live progress while a job is running.
+  if (run.status === "running") {
+    const jobs = mountJobStatus(document.getElementById("job-status"));
+    jobs.show({ title: statusTitle(run), message: "Working…", done: 0, total: 0 });
+    await watchProgress(jobs);
+    return;
+  }
 
   renderAlerts(run);
-  renderCounts(run);
-  renderProgress(run);
-  renderCharts(run);
-  renderTable(run);
-
-  if (run.status === "running") {
-    watchProgress();
-  }
+  await renderSummary(run);
+  renderDetailTable(run);
 }
 
-// Poll the run endpoint while the job is executing so the page shows live
-// progress (message + done/total) instead of a frozen "Running" pill.
-async function watchProgress() {
-  while (true) {
-    await sleep(2000);
-    let fresh;
-    try {
-      fresh = await apiGet(`/api/run/${runId}`);
-    } catch {
-      continue; // transient network blip — keep trying
-    }
-    document.getElementById("run-status").innerHTML = fmtStatus(fresh.status);
-    renderProgress(fresh);
-    if (fresh.status !== "running") {
-      // Done — re-render everything, including counts and the detail table.
-      renderAlerts(fresh);
-      renderCounts(fresh);
-      renderCharts(fresh);
-      renderTable(fresh);
-      return;
-    }
-  }
-}
-
-function renderProgress(run) {
-  const el = document.getElementById("progress");
-  if (run.status !== "running") {
-    el.classList.add("hidden");
-    el.innerHTML = "";
-    return;
-  }
-  const live = run.live || {};
-  const p = live.progress || {};
-  const msg = p.message || "Working…";
-  const done = Number(p.done) || 0;
-  const total = Number(p.total) || 0;
-  const barAttr = total > 0 ? `value="${done}" max="${total}"` : ""; // indeterminate
-  const sub = total > 0 ? `${done.toLocaleString()} / ${total.toLocaleString()}` : "";
-  el.classList.remove("hidden");
-  el.innerHTML = `
-    <div class="upload-progress">
-      <div class="upload-progress__label">${escapeHtml(msg)}</div>
-      <progress class="upload-progress__bar" ${barAttr}></progress>
-      <div class="upload-progress__bytes muted">${escapeHtml(sub)}</div>
-    </div>
-  `;
+function renderHeader(run) {
+  const title = document.getElementById("page-title");
+  const sub   = document.getElementById("page-sub");
+  const label = KIND_LABEL[run.kind] || run.kind;
+  title.textContent = `${label} · #${run.id}`;
+  const when = `${escapeHtml(fmtDateTime(run.created_at))} · ${escapeHtml(fmtRelative(run.created_at))}`;
+  sub.innerHTML = `${when} · ${fmtFile(run)}`;
 }
 
 function renderAlerts(run) {
   const el = document.getElementById("alerts");
   const bits = [];
   if (run.error) {
-    bits.push(`<div class="alert error">${escapeHtml(run.error)}</div>`);
+    bits.push(alertHtml("error", "Error", run.error));
   }
-  if (run.applied_at) {
-    bits.push(`<p class="muted">Applied ${escapeHtml(fmtDateTime(run.applied_at))}.</p>`);
+  if (run.applied_at && run.kind && run.kind.startsWith("preview")) {
+    bits.push(alertHtml("info", "Already applied",
+      `This preview was applied ${fmtDateTime(run.applied_at)}.`));
   }
   el.innerHTML = bits.join("");
 }
 
-function renderCounts(run) {
+async function renderSummary(run) {
+  const host = document.getElementById("summary-tiles");
+  const sub  = document.getElementById("summary-sub");
   const c = run.counts || {};
-  const el = document.getElementById("counts");
-  let cells;
+
   if (run.kind === "cache_refresh") {
-    cells = [
-      [c.sku_count, "products"],
-      [c.duplicate_count, "duplicate SKUs"],
-      [c.blank_sku_count, "blank SKUs"],
-      [c.untracked_count, "not tracked"],
+    sub.textContent = "How the current Shopify catalog breaks down.";
+    const tiles = [
+      { id: "products", label: "Products known",  value: c.sku_count,       variant: "brand" },
+      { id: "dup",      label: "Duplicate SKUs",  value: c.duplicate_count, variant: "warn"  },
+      { id: "blank",    label: "Blank SKUs",      value: c.blank_sku_count, variant: "warn"  },
+      { id: "untrack",  label: "Not tracked",     value: c.untracked_count, variant: "warn"  },
     ];
-  } else if (run.kind === "preview_both") {
-    const inv = c.inventory || {};
-    const prices = c.prices;
-    cells = [
-      [inv.excel_rows,  "rows in file"],
-      [inv.matched,     "matched (inventory)"],
-      [inv.will_change, "inventory changes"],
-    ];
-    if (prices) {
-      cells.push([prices.matched,     "matched (prices)"]);
-      cells.push([prices.will_change, "price changes"]);
-    }
+    mountSummaryTiles(host, { tiles });
+    return;
+  }
+
+  // For apply runs the parent preview holds the aggregates.
+  const aggRunId = APPLY_KINDS.has(run.kind) && run.parent_run_id ? run.parent_run_id : run.id;
+  let agg = { summary: {} };
+  try { agg = await apiGet(`/api/run/${aggRunId}/aggregates`); } catch {}
+  const summary = agg.summary || {};
+
+  sub.textContent = APPLY_KINDS.has(run.kind)
+    ? "What this run pushed to Shopify."
+    : "Counts are over every row in your file.";
+
+  let tiles;
+  if (run.kind === "preview_prices" || run.kind === "apply_prices") {
+    tiles = priceTiles(summary);
+  } else if (run.kind === "preview_both" || run.kind === "apply_both") {
+    tiles = combinedTiles(summary);
   } else {
-    cells = [
-      [c.excel_rows, "rows in file"],
-      [c.matched, "matched"],
-      [c.will_change, "would change"],
-    ];
-    if (run.kind === "apply" || run.kind === "apply_prices" || run.kind === "apply_both") {
-      cells.push([run.pushed, "pushed to Shopify"]);
-      cells.push([run.user_errors, "errors"]);
+    tiles = inventoryTiles(summary);
+  }
+
+  // For apply runs, prepend one "Pushed" tile so the result is explicit.
+  if (APPLY_KINDS.has(run.kind)) {
+    tiles.unshift({
+      id: "pushed", label: "Pushed to Shopify",
+      value: run.pushed || 0, variant: "good",
+      icon: icon.check({ size: 14 }),
+    });
+    if (run.user_errors) {
+      tiles.push({
+        id: "errors", label: "Rows with errors",
+        value: run.user_errors, variant: "bad",
+        icon: icon.warn({ size: 14 }),
+      });
     }
   }
-  el.innerHTML = cells
-    .map(([n, label]) => `<div><strong>${n ?? 0}</strong><span>${escapeHtml(label)}</span></div>`)
-    .join("");
+  mountSummaryTiles(host, { tiles });
 }
 
-async function renderCharts(run) {
-  const card = document.getElementById("run-charts-card");
-  const title = document.getElementById("run-charts-title");
-  const subtitle = document.getElementById("run-charts-subtitle");
-  const primary = document.getElementById("run-chart-primary");
-  const secondary = document.getElementById("run-chart-secondary");
-  if (!card || !primary) return;
-  if (run.status === "running") {
-    card.classList.add("hidden");
-    return;
-  }
-
-  const c = run.counts || {};
-
-  if (run.kind === "cache_refresh") {
-    const total = Number(c.sku_count) || 0;
-    const dup = Number(c.duplicate_count) || 0;
-    const blank = Number(c.blank_sku_count) || 0;
-    const untracked = Number(c.untracked_count) || 0;
-    const clean = Math.max(0, total - dup - blank - untracked);
-    const segs = [
-      { label: "Ready to sync", value: clean,     color: "#059669" },
-      { label: "Not tracked",   value: untracked, color: "#6b21a8" },
-      { label: "Blank SKU",     value: blank,     color: "#64748b" },
-      { label: "Duplicate SKU", value: dup,       color: "#d97706" },
-    ];
-    if (!segs.some(s => s.value > 0)) return;
-    title.textContent = "Product list at a glance";
-    subtitle.textContent = "How the current Shopify catalog breaks down.";
-    primary.innerHTML = donut({ segments: segs, title: "Products" });
-    secondary.innerHTML = "";
-    card.classList.remove("hidden");
-    return;
-  }
-
-  // preview / apply / preview_prices / apply_prices / preview_both / apply_both
-  let agg;
-  try {
-    const applyKinds = new Set(["apply", "apply_prices", "apply_both"]);
-    const aggRunId = applyKinds.has(run.kind) && run.parent_run_id
-      ? run.parent_run_id : run.id;
-    agg = await apiGet(`/api/run/${aggRunId}/aggregates`);
-  } catch {
-    return;
-  }
-  const mb = agg.match_breakdown || {};
-  const cd = agg.change_direction || {};
-  const matchSegs = [
-    { label: "Matched",   value: mb.matched || 0,   color: "#059669" },
-    { label: "Unmatched", value: mb.unmatched || 0, color: "#64748b" },
-    { label: "Bad qty",   value: mb.bad_qty || 0,   color: "#b91c1c" },
-    { label: "Duplicate", value: mb.duplicate || 0, color: "#d97706" },
-    { label: "Untracked", value: mb.untracked || 0, color: "#6b21a8" },
-  ];
-  const isPrice = run.kind === "preview_prices" || run.kind === "apply_prices";
-  const dirSegs = isPrice ? [
-    { label: "Price up",   value: cd.up || 0,        color: "#059669" },
-    { label: "Price down", value: cd.down || 0,      color: "#d97706" },
-    { label: "No change",  value: cd.no_change || 0, color: "#94a3b8" },
-  ] : [
-    { label: "Going up",   value: cd.up || 0,        color: "#059669" },
-    { label: "Going down", value: cd.down || 0,      color: "#d97706" },
-    { label: "To zero",    value: cd.to_zero || 0,   color: "#b91c1c" },
-    { label: "No change",  value: cd.no_change || 0, color: "#94a3b8" },
-  ];
-  if (!matchSegs.some(s => s.value > 0) && !dirSegs.some(s => s.value > 0)) return;
-
-  title.textContent = "At a glance";
-  subtitle.textContent = isPrice
-    ? "How SKUs in the file match Shopify, and which way prices move."
-    : "How SKUs in the file match Shopify, and which way stock moves.";
-  primary.innerHTML = donut({ segments: matchSegs, title: "SKUs in file" });
-  secondary.innerHTML = stackedBar({
-    segments: dirSegs,
-    title: isPrice ? "Price changes" : "Stock changes",
-  });
-  card.classList.remove("hidden");
-}
-
-function renderTable(run) {
-  // Show the before/after table for preview/apply runs that still have detail files.
+function renderDetailTable(run) {
   if (run.kind === "cache_refresh") return;
 
-  // Combined runs have two tables — link to the dedicated page instead of
-  // trying to cram both into the single-table layout here.
+  // Combined runs link out to the dedicated combined page.
   if (run.kind === "preview_both" || run.kind === "apply_both") {
-    const previewId = run.kind === "apply_both" && run.parent_run_id
-      ? run.parent_run_id : runId;
-    document.getElementById("alerts").insertAdjacentHTML(
-      "beforeend",
-      `<p class="muted"><a class="btn-link" href="/preview-both.html?id=${previewId}">See the full inventory + price preview →</a></p>`
-    );
+    const previewId = run.kind === "apply_both" && run.parent_run_id ? run.parent_run_id : runId;
+    document.getElementById("alerts").insertAdjacentHTML("beforeend",
+      alertHtml("info", "Combined preview",
+        `See the full inventory + price tables on the combined preview page.`,
+        `<a class="btn btn--sm" href="/preview-both.html?id=${previewId}">Open combined preview →</a>`));
     return;
   }
 
-  // For apply runs, detail lives on the parent preview run.
-  const isApply = run.kind === "apply" || run.kind === "apply_prices";
-  const detailId = isApply && run.parent_run_id ? run.parent_run_id : runId;
+  // For apply runs, details live on the parent preview.
+  const detailId = APPLY_KINDS.has(run.kind) && run.parent_run_id ? run.parent_run_id : runId;
   const isPriceRun = run.kind === "preview_prices" || run.kind === "apply_prices";
 
   apiGet(`/api/run/${detailId}`).then(detailRun => {
     if (!detailRun.details_available) {
-      document.getElementById("alerts").insertAdjacentHTML(
-        "beforeend",
-        '<p class="muted">Details for this run have expired (kept for 90 days).</p>'
-      );
+      document.getElementById("alerts").insertAdjacentHTML("beforeend",
+        alertHtml("info", "Details expired",
+          "Details for this run have been removed (we keep them for 90 days)."));
       return;
     }
-    document.getElementById("table-card").classList.remove("hidden");
-    wireTable(detailId, isPriceRun);
+    document.getElementById("changes-card").classList.remove("hidden");
+    mountChangesTable(document.getElementById("changes-mount"), {
+      endpoint: `/api/run/${detailId}/preview`,
+      kind: isPriceRun ? "prices" : "inventory",
+      filters: isPriceRun ? PRICE_FILTERS : INVENTORY_FILTERS,
+    });
+
+    // Problem rows for preview-style runs (apply rows don't reflow problems).
+    if (PREVIEW_KINDS.has(run.kind) || APPLY_KINDS.has(run.kind)) {
+      document.getElementById("problems-card").classList.remove("hidden");
+      mountProblemsTable(document.getElementById("problems-mount"), {
+        endpoint: `/api/run/${detailId}/problems`,
+        csvHref:  `/api/run/${detailId}/problems.csv`,
+      });
+    }
   }).catch(() => {});
 }
 
-function fmtMoney(v) {
-  if (v == null || v === "") return "—";
-  const n = Number(v);
-  if (isNaN(n)) return escapeHtml(String(v));
-  return `$${n.toFixed(2)}`;
-}
-
-function fmtPriceDiff(diff) {
-  if (diff == null) return '<span class="muted">—</span>';
-  const n = Number(diff);
-  if (isNaN(n)) return '<span class="muted">—</span>';
-  if (n === 0) return "0.00";
-  const cls = n > 0 ? "diff-pos" : "diff-neg";
-  const sign = n > 0 ? "+" : "−";
-  return `<span class="${cls}">${sign}$${Math.abs(n).toFixed(2)}</span>`;
-}
-
-function wireTable(detailId, isPriceRun) {
-  const tbody = document.getElementById("preview-rows");
-  const pagination = document.getElementById("pagination");
-  const search = document.getElementById("search-input");
-  const state = { page: 1, q: "" };
-  let timer = null;
-
-  async function load() {
-    const qs = new URLSearchParams({ page: state.page, q: state.q });
-    try {
-      const data = await apiGet(`/api/run/${detailId}/preview?${qs}`);
-      render(data);
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="5" class="err">${escapeHtml(e.message)}</td></tr>`;
+async function watchProgress(jobs) {
+  while (true) {
+    await sleep(2000);
+    let fresh;
+    try { fresh = await apiGet(`/api/run/${runId}`); } catch { continue; }
+    const live = fresh.live || {};
+    const p = live.progress || {};
+    jobs.update({
+      title: statusTitle(fresh),
+      message: p.message || "Working…",
+      done: Number(p.done) || 0,
+      total: Number(p.total) || 0,
+    });
+    if (fresh.status !== "running") {
+      jobs.hide();
+      window.location.reload();
+      return;
     }
   }
-
-  function render(data) {
-    tbody.innerHTML = data.rows.map(r => {
-      const current = isPriceRun ? fmtMoney(r.shopify_price) : (r.shopify_qty == null ? "—" : r.shopify_qty);
-      const next = isPriceRun ? fmtMoney(r.new_price) : r.new_qty;
-      const diff = isPriceRun ? fmtPriceDiff(r.diff) : fmtDiff(r.diff);
-      return `
-      <tr>
-        <td class="col-img">${renderThumb(r)}</td>
-        <td class="sku">${escapeHtml(r.sku)}</td>
-        <td>${escapeHtml(r.title || "")}</td>
-        <td class="num">${current}</td>
-        <td class="num">${next}</td>
-        <td class="num">${diff}</td>
-      </tr>
-    `;
-    }).join("");
-    const totalPages = Math.max(1, Math.ceil(data.total / data.per_page));
-    pagination.innerHTML = `
-      <button ${data.page <= 1 ? "disabled" : ""} data-dir="-1">Prev</button>
-      <span>Page ${data.page} of ${totalPages} — ${data.total} rows</span>
-      <button ${data.page >= totalPages ? "disabled" : ""} data-dir="1">Next</button>
-    `;
-    for (const b of pagination.querySelectorAll("button")) {
-      b.addEventListener("click", () => {
-        state.page += Number(b.dataset.dir);
-        load();
-      });
-    }
-  }
-
-  function renderThumb(r) {
-    if (r.image_url) {
-      return `<img class="product-thumb" src="${escapeHtml(r.image_url)}" alt="" loading="lazy">`;
-    }
-    return `<div class="product-thumb product-thumb--empty" aria-hidden="true"></div>`;
-  }
-
-  search.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      state.q = search.value.trim();
-      state.page = 1;
-      load();
-    }, 200);
-  });
-
-  load();
 }
 
-function capitalize(s) { return String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1); }
+function statusTitle(run) {
+  switch (run.kind) {
+    case "preview":        return "Preparing preview";
+    case "preview_prices": return "Preparing price preview";
+    case "preview_both":   return "Preparing preview";
+    case "apply":          return "Updating Shopify";
+    case "apply_prices":   return "Updating Shopify prices";
+    case "apply_both":     return "Updating Shopify";
+    case "cache_refresh":  return "Refreshing the product list";
+    default:               return "Working";
+  }
+}
+
+function alertHtml(kind, title, body, extra = "") {
+  const iconHtml = kind === "warn" || kind === "error"
+    ? icon.warn({ size: 18 }) : icon.info({ size: 18 });
+  return `
+    <div class="alert ${kind}">
+      <span class="alert__icon">${iconHtml}</span>
+      <div class="alert__body">
+        <div class="alert__title">${escapeHtml(title)}</div>
+        ${body ? `<div>${escapeHtml(body)}</div>` : ""}
+        ${extra ? `<div style="margin-top:8px">${extra}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
 
 init();

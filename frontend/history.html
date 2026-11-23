@@ -4,25 +4,46 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Latest changes — HVAC Inventory</title>
+  <meta name="theme-color" content="#0a2d6e">
+  <title>Recent runs — HVAC Inventory</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap">
-      <a href="/" class="brand">HVAC Inventory</a>
-      <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history.html">Latest changes</a>
-      </nav>
-    </div>
-  </header>
-  <main class="wrap">
-    <section class="card">
-      <h2>Latest changes</h2>
-      <div id="runs-list">Loading…</div>
-    </section>
-  </main>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
+
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title">All runs</h1>
+            <p class="page-header__subtitle">Every upload, preview and update you've done. Click a row for details.</p>
+          </div>
+          <div class="card__actions">
+            <a class="btn btn--primary" href="/">Upload a new file</a>
+          </div>
+        </div>
+
+        <section class="card card--flush" aria-labelledby="runs-title">
+          <div class="card__header" style="padding: 24px 24px 0">
+            <div>
+              <h2 class="card__title" id="runs-title">History</h2>
+              <p class="card__subtitle" id="runs-sub">Most recent first.</p>
+            </div>
+          </div>
+          <div id="runs-list" style="padding: 12px 0 0">
+            <div class="skel-stack" style="padding: 0 24px 24px">
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
   <script type="module" src="/src/history.js"></script>
 </body>
 </html>

@@ -71,3 +71,11 @@ SKU_CACHE_FILE = DATA_DIR / "sku_cache.json"
 UPLOADS_DIR = DATA_DIR / "uploads"
 RUNS_DIR = DATA_DIR / "runs"
 HISTORY_DB = DATA_DIR / "history.sqlite"
+
+# Confirm-dialog friction thresholds. When either is exceeded, the UI
+# requires the user to type PUSH before the Shopify update runs.
+#   Big OOS:    >20% of matched products going to 0 stock
+#   Big price:  any price change by more than 30%
+# Exposed via /api/dev/flags so the frontend reads the same source of truth.
+CONFIRM_BIG_OOS_PCT = 0.20
+CONFIRM_BIG_PRICE_JUMP_PCT = 0.30

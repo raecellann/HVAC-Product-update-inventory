@@ -4,48 +4,65 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta name="theme-color" content="#0a2d6e">
   <title>Update prices — HVAC Inventory</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap">
-      <a href="/" class="brand">HVAC Inventory</a>
-      <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history.html">Latest changes</a>
-      </nav>
-    </div>
-  </header>
-  <main class="wrap">
-    <div id="dev-banner" class="alert warn hidden">
-      Dev mode: Update Shopify is disabled on the server.
-    </div>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
 
-    <section class="card">
-      <h2>Update prices</h2>
-      <p>Upload an Excel file with SKU and Price columns. The site will show you the old vs. new price before anything is sent to Shopify.</p>
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title">Update prices only</h1>
+            <p class="page-header__subtitle">Upload a file with SKU + price columns. You'll see the before and after before anything is sent to Shopify.</p>
+          </div>
+          <div class="card__actions">
+            <a class="btn" href="/">← Back to dashboard</a>
+          </div>
+        </div>
 
-      <div id="busy-banner" class="alert warn hidden">
-        A job is currently running. Please wait for it to finish.
+        <div id="job-status" class="hidden" aria-live="polite"></div>
+
+        <section class="card" aria-labelledby="upload-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="upload-title">1. Upload the file</h2>
+              <p class="card__subtitle">Only the SKU and price columns are read. Quantity columns, if any, are ignored.</p>
+            </div>
+          </div>
+
+          <div id="upload-mount"></div>
+
+          <div class="upload-actions">
+            <button type="button" id="upload-submit" class="btn btn--primary btn--lg" disabled>
+              Upload and preview prices
+            </button>
+            <span class="muted" id="upload-hint">Select a file to continue</span>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="runs-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="runs-title">Recent price runs</h2>
+              <p class="card__subtitle">Previous price-only previews and updates.</p>
+            </div>
+          </div>
+          <div id="runs-list">
+            <div class="skel-stack">
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+            </div>
+          </div>
+        </section>
       </div>
+    </main>
+  </div>
 
-      <form id="upload-form" enctype="multipart/form-data" class="upload-form">
-        <label class="file-picker">
-          <input type="file" name="file" id="file-input" accept=".xlsx,.xlsm" required>
-          <span class="file-picker__btn">Choose file</span>
-          <span class="file-picker__name" id="file-picker-name">No file chosen</span>
-        </label>
-        <button type="submit" id="upload-btn" class="btn btn-primary">Upload and preview</button>
-      </form>
-      <div id="upload-status" class="status"></div>
-    </section>
-
-    <section class="card">
-      <h2>Recent price runs</h2>
-      <div id="runs-list">Loading…</div>
-    </section>
-  </main>
   <script type="module" src="/src/prices.js"></script>
 </body>
 </html>

@@ -4,101 +4,148 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <!-- Matches --primary-800 (store navy). Literal hex is unavoidable here;
+       <meta> can't reference a CSS variable. Update if the token moves. -->
+  <meta name="theme-color" content="#0a2d6e">
   <title>Dashboard — HVAC Inventory</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="wrap">
-      <a href="/" class="brand">HVAC Inventory</a>
-      <nav>
-        <a href="/">Dashboard</a>
-        <a href="/history.html">Latest changes</a>
-      </nav>
-    </div>
-  </header>
-  <main class="wrap">
-    <div id="dev-banner" class="alert warn hidden">
-      Dev mode: Update Shopify is disabled on the server.
-    </div>
+  <div class="app-shell">
+    <!-- Top bar is rendered by shell.js; this header is a placeholder slot. -->
+    <header class="app-topbar" id="app-shell"></header>
 
-    <section class="card">
-      <h2>Update inventory and prices</h2>
-      <p>Upload today's supplier Excel file. The site shows what will change before anything is sent to Shopify. After you pick a file, choose whether to update quantities, prices, or both.</p>
-
-      <div id="busy-banner" class="alert warn hidden">
-        A job is currently running. Please wait for it to finish.
-      </div>
-
-      <form id="upload-form" enctype="multipart/form-data" class="upload-form">
-        <label class="file-picker">
-          <input type="file" name="file" id="file-input" accept=".xlsx,.xlsm" required>
-          <span class="file-picker__btn">Choose file</span>
-          <span class="file-picker__name" id="file-picker-name">No file chosen</span>
-        </label>
-        <button type="submit" id="upload-btn" class="btn btn-primary">Upload and preview</button>
-      </form>
-      <div id="upload-status" class="status"></div>
-    </section>
-
-    <div id="mode-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="mode-modal-title">
-      <div class="modal-dialog">
-        <h3 id="mode-modal-title">What do you want to update?</h3>
-        <p class="muted">The file will be uploaded once; the system will only run the pieces you select.</p>
-        <form id="mode-form">
-          <label class="mode-option">
-            <input type="radio" name="mode" value="both" checked>
-            <div>
-              <strong>Both inventory and prices</strong>
-              <span class="muted">Preview and push quantities + prices in one run.</span>
-            </div>
-          </label>
-          <label class="mode-option">
-            <input type="radio" name="mode" value="inventory">
-            <div>
-              <strong>Inventory only</strong>
-              <span class="muted">Update quantities. Prices in the file are ignored.</span>
-            </div>
-          </label>
-          <label class="mode-option">
-            <input type="radio" name="mode" value="prices">
-            <div>
-              <strong>Prices only</strong>
-              <span class="muted">Update prices. Quantities in the file are ignored.</span>
-            </div>
-          </label>
-          <div class="modal-actions">
-            <button type="button" id="mode-cancel" class="btn">Cancel</button>
-            <button type="submit" class="btn btn-primary">Continue</button>
+    <main class="app-main" id="main">
+      <div class="wrap">
+        <!-- Header -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title">Daily inventory &amp; price update</h1>
+            <p class="page-header__subtitle">Upload today's supplier Excel file. Nothing is sent to Shopify until you review the changes and press confirm.</p>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
 
-    <section class="card">
-      <h2>Product list</h2>
-      <div id="cache-info">Loading…</div>
-      <button id="refresh-cache-btn">Refresh product list</button>
-      <div id="cache-status" class="status"></div>
-    </section>
+        <!-- Workflow stepper -->
+        <div id="stepper-slot"></div>
 
-    <section class="card hidden" id="charts-card">
-      <div class="charts-header">
-        <h2>Latest preview at a glance</h2>
-        <p id="charts-subtitle" class="muted"></p>
-      </div>
-      <div class="charts-grid">
-        <div id="chart-match"></div>
-        <div id="chart-direction"></div>
-      </div>
-    </section>
+        <!-- Job status (hidden until a job is running) -->
+        <div id="job-status" class="hidden" aria-live="polite"></div>
 
-    <section class="card">
-      <h2>Latest changes</h2>
-      <div id="runs-list">Loading…</div>
-      <p><a href="/history.html">See all runs →</a></p>
-    </section>
-  </main>
+        <!-- Step 1: Upload -->
+        <section class="card" aria-labelledby="upload-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="upload-title">1. Upload today's file</h2>
+              <p class="card__subtitle">After you pick a file, you'll choose whether to update quantities, prices, or both.</p>
+            </div>
+          </div>
+
+          <div id="upload-mount"></div>
+
+          <div class="upload-actions">
+            <button type="button" id="upload-submit" class="btn btn--primary btn--lg" disabled>
+              Continue
+            </button>
+            <span class="muted" id="upload-hint">Select a file to continue</span>
+          </div>
+
+          <div id="upload-status" class="status" aria-live="polite"></div>
+        </section>
+
+        <!-- Hidden mode-picker modal (kept from pre-redesign; styled by new tokens) -->
+        <div id="mode-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="mode-modal-title">
+          <div class="modal-dialog">
+            <h3 id="mode-modal-title">What do you want to update?</h3>
+            <p class="muted">The file will be uploaded once. The site will only run the parts you select.</p>
+            <form id="mode-form">
+              <label class="mode-option">
+                <input type="radio" name="mode" value="both" checked>
+                <div>
+                  <strong>Both inventory and prices</strong>
+                  <span class="muted">Preview and push quantities + prices in one run.</span>
+                </div>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="mode" value="inventory">
+                <div>
+                  <strong>Inventory only</strong>
+                  <span class="muted">Update quantities. Prices in the file are ignored.</span>
+                </div>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="mode" value="prices">
+                <div>
+                  <strong>Prices only</strong>
+                  <span class="muted">Update prices. Quantities in the file are ignored.</span>
+                </div>
+              </label>
+              <div class="modal-actions">
+                <button type="button" id="mode-cancel" class="btn">Cancel</button>
+                <button type="submit" class="btn btn--primary">Continue</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Product list -->
+        <section class="card" aria-labelledby="catalog-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="catalog-title">Product list from Shopify</h2>
+              <p class="card__subtitle">Refresh this when new products are added or SKUs change.</p>
+            </div>
+            <div class="card__actions">
+              <button id="refresh-cache-btn" type="button" class="btn">
+                Refresh product list
+              </button>
+            </div>
+          </div>
+          <div id="cache-info">
+            <div class="stat-row">
+              <div class="skel skel--tile"></div>
+              <div class="skel skel--tile"></div>
+            </div>
+          </div>
+          <div id="cache-status" class="status" aria-live="polite"></div>
+        </section>
+
+        <!-- Charts of the latest preview -->
+        <section class="card hidden" id="charts-card" aria-labelledby="charts-title">
+          <div class="card__header charts-header">
+            <div>
+              <h2 class="card__title" id="charts-title">Latest preview at a glance</h2>
+              <p class="card__subtitle" id="charts-subtitle"></p>
+            </div>
+          </div>
+          <div class="charts-grid">
+            <div id="chart-match"></div>
+            <div id="chart-direction"></div>
+          </div>
+        </section>
+
+        <!-- Recent runs -->
+        <section class="card" aria-labelledby="runs-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="runs-title">Recent runs</h2>
+              <p class="card__subtitle">The last few uploads, previews and updates.</p>
+            </div>
+            <div class="card__actions">
+              <a href="/history.html" class="btn-link">See all runs →</a>
+            </div>
+          </div>
+          <div id="runs-list">
+            <div class="skel-stack">
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+              <div class="skel skel--row"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
   <script type="module" src="/src/dashboard.js"></script>
 </body>
 </html>
