@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta name="theme-color" content="#0a2d6e">
+  <title>Cross references — HVAC Inventory</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-topbar" id="app-shell"></header>
+
+    <main class="app-main">
+      <div class="wrap">
+        <div class="page-header">
+          <div>
+            <h1 class="page-header__title">Cross references</h1>
+            <p class="page-header__subtitle">
+              Find and backfill the <code>custom.cross_reference</code> metafield (UPC/GTIN) for
+              every product in the Parts collection, using supplier sites keyed by SKU.
+            </p>
+          </div>
+        </div>
+
+        <!-- Live job status -->
+        <div id="job-status-wrap" class="hidden">
+          <div id="job-status" aria-live="polite"></div>
+          <button type="button" id="cancel-btn" class="btn hidden" style="margin-top:8px">
+            Cancel crawl
+          </button>
+        </div>
+
+        <!-- Overview / start crawl -->
+        <section class="card" aria-labelledby="start-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="start-title">1. Scan and crawl</h2>
+              <p class="card__subtitle">
+                Scans the Parts collection for products missing cross_reference, then looks
+                each SKU up at the URL you provide. Results are cached per site, so a re-run
+                against the same template only hits the site for new SKUs.
+              </p>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label for="url-template" style="display:block; font-weight:600; margin-bottom:6px">
+              Supplier URL template
+            </label>
+            <input
+              type="url"
+              id="url-template"
+              class="btn"
+              style="width:100%; max-width:720px; font-family:monospace"
+              placeholder="https://www.alltemp.ca/product/{sku_lower}/"
+              value="https://www.alltemp.ca/product/{sku_lower}/"
+              spellcheck="false"
+              required>
+            <p class="muted" style="margin-top:6px; max-width:720px">
+              Use <code>{sku}</code> (as-is), <code>{sku_lower}</code>, or <code>{sku_upper}</code>
+              as a placeholder. Example: <code>https://www.alltemp.ca/product/{sku_lower}/</code>
+              will fetch <code>/product/wg840596/</code> for SKU WG840596.
+            </p>
+          </div>
+
+          <div class="upload-actions" style="margin-top:12px">
+            <button type="button" id="crawl-btn" class="btn btn--primary btn--lg">
+              Start new crawl
+            </button>
+            <span class="muted" id="crawl-hint">
+              This may take a while &mdash; a Parts collection with thousands of products at ~1&nbsp;sec per lookup can run for hours. Cached hits are near-instant.
+            </span>
+          </div>
+
+          <div id="latest-summary" class="status" aria-live="polite">
+            <div class="skel skel--row"></div>
+          </div>
+        </section>
+
+        <!-- Results -->
+        <section class="card hidden" id="results-card" aria-labelledby="results-title">
+          <div class="card__header">
+            <div>
+              <h2 class="card__title" id="results-title">2. Review results</h2>
+              <p class="card__subtitle" id="results-sub">
+                Review the UPCs the crawler found. You can push matches to Shopify below.
+              </p>
+            </div>
+            <div class="card__actions">
+              <label class="muted" for="filter-status">Show:</label>
+              <select id="filter-status" class="btn">
+                <option value="all">All</option>
+                <option value="found" selected>Found UPC</option>
+                <option value="not_found">Not found</option>
+                <option value="skipped">Skipped</option>
+              </select>
+              <input type="search" id="filter-q" class="btn" placeholder="Search SKU or title" style="min-width: 220px">
+            </div>
+          </div>
+          <div id="results-mount"></div>
+        </section>
+
+        <!-- Push to Shopify -->
+        <div id="push-footer" class="push-footer hidden">
+          <div class="wrap push-footer__inner">
+            <div class="push-footer__copy">
+              <strong id="push-head">Ready to update Shopify</strong>
+              <span class="muted" id="push-sub">
+                Writes the found UPCs to the custom.cross_reference metafield on each product.
+              </span>
+            </div>
+            <div class="push-footer__actions">
+              <button type="button" id="push-btn" class="btn btn--primary btn--lg">
+                Push found values to Shopify
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/src/crossref.js"></script>
+</body>
+</html>

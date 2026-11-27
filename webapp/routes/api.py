@@ -536,6 +536,15 @@ def job_status(job_id: str, runner: JobRunner = Depends(get_runner)) -> JSONResp
     return JSONResponse(job)
 
 
+@router.post("/cancel/{job_id}")
+def cancel_job(job_id: str, runner: JobRunner = Depends(get_runner)) -> JSONResponse:
+    """Request cooperative cancellation. The job stops at its next progress tick."""
+    ok = runner.cancel(job_id)
+    if not ok:
+        raise HTTPException(404, "No running job with that id.")
+    return JSONResponse({"ok": True, "job_id": job_id})
+
+
 # ---------------------------------------------------------------- preview query
 
 

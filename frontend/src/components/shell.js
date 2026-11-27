@@ -7,8 +7,9 @@
 import { apiGet } from "../api.js";
 
 const NAV = [
-  { id: "dashboard",  label: "Dashboard",     href: "/" },
-  { id: "history",    label: "Recent runs",   href: "/history.html" },
+  { id: "dashboard",  label: "Dashboard",       href: "/" },
+  { id: "crossref",   label: "Cross references", href: "/crossref.html" },
+  { id: "history",    label: "Recent runs",     href: "/history.html" },
 ];
 
 export function mountShell({ active = "dashboard" } = {}) {

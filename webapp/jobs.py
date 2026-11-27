@@ -19,11 +19,21 @@ class JobBusy(Exception):
     pass
 
 
+class JobCancelled(Exception):
+    """Raised cooperatively when progress_cb notices a cancel request.
+
+    A long-running job must call progress_cb() periodically to be cancellable —
+    threads can't be killed in Python, so we rely on the job yielding.
+    """
+    pass
+
+
 class JobRunner:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="job")
         self._jobs: dict[str, dict[str, Any]] = {}
+        self._cancel_flags: dict[str, bool] = {}
         self._current: str | None = None
 
     # ------------------------------------------------------------ public API
@@ -66,6 +76,9 @@ class JobRunner:
             try:
                 fn(progress_cb=self._progress_cb(job_id), **call_kwargs)
                 self._finish(job_id, "succeeded")
+            except JobCancelled:
+                log.info("Job %s (%s) cancelled by user", job_id, kind)
+                self._finish(job_id, "cancelled", error="Cancelled by user")
             except Exception as e:  # noqa: BLE001 — surface anything to the UI
                 log.exception("Job %s (%s) failed", job_id, kind)
                 self._finish(job_id, "failed", error=str(e))
@@ -89,6 +102,22 @@ class JobRunner:
         with self._lock:
             return self._current is not None
 
+    def cancel(self, job_id: str) -> bool:
+        """Request cancellation. Returns True if a running job was flagged.
+
+        The job keeps going until its next progress_cb call — that's where the
+        JobCancelled exception is raised. Jobs that don't call progress_cb
+        can't be cancelled this way.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job["state"] != "running":
+                return False
+            self._cancel_flags[job_id] = True
+            return True
+
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
@@ -96,10 +125,16 @@ class JobRunner:
 
     def _progress_cb(self, job_id: str) -> Callable[..., None]:
         def cb(done: int = 0, total: int = 0, message: str = "") -> None:
+            cancelled = False
             with self._lock:
-                job = self._jobs.get(job_id)
-                if job is not None:
-                    job["progress"] = {"done": done, "total": total, "message": message}
+                if self._cancel_flags.get(job_id):
+                    cancelled = True
+                else:
+                    job = self._jobs.get(job_id)
+                    if job is not None:
+                        job["progress"] = {"done": done, "total": total, "message": message}
+            if cancelled:
+                raise JobCancelled("Cancelled by user")
         return cb
 
     def _finish(self, job_id: str, state: str, error: str | None = None) -> None:
@@ -110,6 +145,7 @@ class JobRunner:
                 job["finished_at"] = _now()
                 if error:
                     job["error"] = error
+            self._cancel_flags.pop(job_id, None)
             if self._current == job_id:
                 self._current = None
 

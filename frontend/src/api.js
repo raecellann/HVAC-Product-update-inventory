@@ -215,6 +215,12 @@ export async function pollJob(jobId, statusEl, onDone) {
     }
     if (data.state === "failed") {
       statusEl.innerHTML = `<span class="err">${escapeHtml(data.error || "Job failed")}</span>`;
+      onDone && onDone(data);
+      return;
+    }
+    if (data.state === "cancelled") {
+      statusEl.textContent = "Cancelled.";
+      onDone && onDone(data);
       return;
     }
   }

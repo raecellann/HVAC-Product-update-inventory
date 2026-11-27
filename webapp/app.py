@@ -19,6 +19,7 @@ from core.config import DATA_DIR
 
 from . import history
 from .routes import api as api_routes
+from .routes import crossref as crossref_routes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     app.include_router(api_routes.router)
+    app.include_router(crossref_routes.router)
 
     if FRONTEND_DIST.exists():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")

@@ -7,3 +7,6 @@ tenacity>=8.5.0
 fastapi>=0.115
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
+
+# Cross-reference crawler
+beautifulsoup4>=4.12.0
