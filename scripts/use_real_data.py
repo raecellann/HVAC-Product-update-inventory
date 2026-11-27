@@ -12,7 +12,7 @@ What it does:
 
 Run it:
   python scripts/use_real_data.py path\\to\\file.xlsx
-  (defaults to 3HVLUJ76N6EH1L.daily.20261115183002.xlsx in the project root)
+  (defaults to the matching xlsx under input/)
 """
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ sys.path.insert(0, str(ROOT))
 # dev-data is where the dev UI reads from
 os.environ.setdefault("DATA_DIR", str(ROOT / "dev-data"))
 
-import compare_inventory as cmp_mod  # noqa: E402
-from build_sku_cache import build_cache as cache_build_cache  # noqa: E402
-from config import RUNS_DIR, SKU_CACHE_FILE, load_config  # noqa: E402
-from shopify_client import ShopifyClient  # noqa: E402
-from update_inventory import load_sku_cache, match_rows, read_excel  # noqa: E402
+from core import compare_inventory as cmp_mod  # noqa: E402
+from core.build_sku_cache import build_cache as cache_build_cache  # noqa: E402
+from core.config import RUNS_DIR, SKU_CACHE_FILE, load_config  # noqa: E402
+from core.shopify_client import ShopifyClient  # noqa: E402
+from core.update_inventory import load_sku_cache, match_rows, read_excel  # noqa: E402
 from webapp import history  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -51,7 +51,7 @@ def _stage_production_cache(prod_cache: Path) -> None:
     if not prod_cache.exists():
         raise SystemExit(
             f"Production cache not found at {prod_cache}. "
-            "Run `python build_sku_cache.py` first."
+            "Run `python -m core.build_sku_cache` first."
         )
     SKU_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     if SKU_CACHE_FILE.exists() and SKU_CACHE_FILE.stat().st_size == prod_cache.stat().st_size:

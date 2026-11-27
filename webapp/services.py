@@ -15,15 +15,15 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Callable
 
-from config import ARCHIVE_DIR, RUNS_DIR, SKU_CACHE_FILE, Config
-from shopify_client import ShopifyClient
-from update_inventory import (
+from core.config import ARCHIVE_DIR, RUNS_DIR, SKU_CACHE_FILE, Config
+from core.shopify_client import ShopifyClient
+from core.update_inventory import (
     match_rows,
     push_batches,
     read_excel,
     load_sku_cache,
 )
-from update_prices import (
+from core.update_prices import (
     build_shopify_price_map,
     download_jsonl as price_download_jsonl,
     match_price_rows,
@@ -33,8 +33,8 @@ from update_prices import (
     stream_match_price_rows,
     wait_for_bulk as price_wait_for_bulk,
 )
-import compare_inventory as cmp_mod
-import build_sku_cache as cache_mod
+from core import compare_inventory as cmp_mod
+from core import build_sku_cache as cache_mod
 
 from . import history, warnings as warning_flags
 

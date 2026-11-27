@@ -30,8 +30,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-from config import load_config  # noqa: E402
-from shopify_client import ShopifyClient  # noqa: E402
+from core.config import load_config  # noqa: E402
+from core.shopify_client import ShopifyClient  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("price_rule_dry_run")

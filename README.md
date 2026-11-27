@@ -36,9 +36,9 @@ Any filename works. The script auto-picks the **most recent** `.xlsx` file.
 ### Step 2: Run the update
 From PowerShell in the project folder:
 ```powershell
-.\run_daily.bat
+.\tools\run_daily.bat
 ```
-Or double-click `run_daily.bat` in File Explorer.
+Or double-click `tools\run_daily.bat` in File Explorer.
 
 ### Step 3: Check the results
 Open the newest file in `logs/`:
@@ -73,19 +73,27 @@ Toggle in `.env`:
 
 ```
 .
-├── input/                  📥 Drop daily Excel files here
-├── archive/                📦 Processed files (timestamped)
-├── logs/                   📋 Per-run logs + unmatched CSV reports
-├── .env                    🔐 Credentials (gitignored)
-├── sku_cache.json          🗂️ SKU → inventoryItemId map (gitignored)
-├── run_daily.bat           ▶️ Main entry point
-├── refresh_sku_cache.bat   🔄 Weekly cache refresh
-├── update_inventory.py     Main script
-├── build_sku_cache.py      Cache builder (bulk query)
-├── find_location.py        Lists Shopify locations
-├── get_access_token.py     OAuth token helper (one-time use)
-├── shopify_client.py       GraphQL API client w/ throttle handling
-└── config.py               Config loader
+├── input/                      📥 Drop daily Excel files here
+├── archive/                    📦 Processed files (timestamped)
+├── logs/                       📋 Per-run logs + unmatched CSV reports
+├── .env                        🔐 Credentials (gitignored)
+├── sku_cache.json              🗂️ SKU → inventoryItemId map (gitignored)
+├── core/                       Python library modules
+│   ├── config.py               Config loader
+│   ├── shopify_client.py       GraphQL API client w/ throttle handling
+│   ├── build_sku_cache.py      Cache builder (bulk query)
+│   ├── compare_inventory.py    Read-only diff vs Shopify
+│   ├── update_inventory.py     Main inventory update
+│   └── update_prices.py        Price update
+├── tools/                      Entry points + one-off helpers
+│   ├── run_daily.bat           ▶️ Main entry point
+│   ├── refresh_sku_cache.bat   🔄 Weekly cache refresh
+│   ├── run_web.py              Local web UI launcher
+│   ├── update_prices_cli.py    Terminal price-push CLI
+│   ├── find_location.py        Lists Shopify locations
+│   └── get_access_token.py     OAuth token helper (one-time use)
+├── webapp/                     FastAPI web app
+└── frontend/                   Vite-built HTML/CSS/JS pages
 ```
 
 ---
@@ -94,7 +102,7 @@ Toggle in `.env`:
 
 Refresh the SKU cache (needed when new products are added):
 ```powershell
-.\refresh_sku_cache.bat
+.\tools\refresh_sku_cache.bat
 ```
 Takes ~1 minute per 70k SKUs. Must run after:
 - Adding new products in Shopify
@@ -129,7 +137,7 @@ Open `.env`, set it to a real Location GID:
 ```
 SHOPIFY_LOCATION_ID=gid://shopify/Location/1234567890
 ```
-To find valid IDs: `python find_location.py`
+To find valid IDs: `python tools/find_location.py`
 
 ### `No Excel file found in input/`
 Drop an `.xlsx` file in `input/` before running.
@@ -138,7 +146,7 @@ Drop an `.xlsx` file in `input/` before running.
 Excel column names don't match. Update `EXCEL_SKU_COLUMN=` in `.env`.
 
 ### Many unmatched SKUs
-1. **Cache is stale** → `.\refresh_sku_cache.bat`
+1. **Cache is stale** → `.\tools\refresh_sku_cache.bat`
 2. **SKU format mismatch** → check `logs/unmatched_<timestamp>.csv`
 3. **Wrong column** → verify Excel columns match `.env`
 
@@ -163,12 +171,12 @@ Re-get it via the OAuth flow (see **Getting the Access Token** below).
 1. **Task Scheduler** → **Create Basic Task** → Name: `Shopify Inventory Daily`
 2. Trigger: Daily at your chosen time
 3. Action: Start a program
-   - Program: `<full path to>\run_daily.bat`
+   - Program: `<full path to>\tools\run_daily.bat`
    - Start in: `<full path to project folder>`
 4. Finish
 
 Recommended: a second task for weekly cache refresh (Sunday 11 PM, pointing at
-`refresh_sku_cache.bat`).
+`tools\refresh_sku_cache.bat`).
 
 ---
 
@@ -200,7 +208,7 @@ notepad .env
 Fill in:
 - `SHOPIFY_STORE_DOMAIN` — your `*.myshopify.com` domain
 - `SHOPIFY_ACCESS_TOKEN` — obtained via OAuth (see below)
-- `SHOPIFY_LOCATION_ID` — obtained via `python find_location.py`
+- `SHOPIFY_LOCATION_ID` — obtained via `python tools/find_location.py`
 
 ### 4. Getting the Access Token
 
@@ -213,13 +221,13 @@ authorize URL → extract `code` → exchange for `shpat_` token:
    ```
 2. Approve the install. You'll land on a `localhost refused to connect` page — expected.
 3. Copy the full URL from the browser address bar (contains `?code=...`).
-4. Run `python get_access_token.py` and paste when prompted.
+4. Run `python tools/get_access_token.py` and paste when prompted.
 5. Save the printed `SHOPIFY_ACCESS_TOKEN=...` line into `.env`.
 
 ### 5. Build the SKU cache (one-time, ~1 min per 70k SKUs)
 
 ```powershell
-python build_sku_cache.py
+python -m core.build_sku_cache
 ```
 
 ---

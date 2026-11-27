@@ -26,8 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import requests
 from openpyxl import load_workbook
 
-from config import PROJECT_ROOT, load_config
-from shopify_client import ShopifyClient
+from core.config import PROJECT_ROOT, load_config
+from core.shopify_client import ShopifyClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pricing_audit")

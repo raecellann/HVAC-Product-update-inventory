@@ -27,10 +27,10 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("EXCEL_TITLE_COLUMN", "Title")
 
     import importlib
-    import config as _cfg
+    import core.config as _cfg
     importlib.reload(_cfg)
     # These modules import config's module-level paths; reload so they see the new DATA_DIR.
-    for name in ("update_inventory", "compare_inventory", "build_sku_cache"):
+    for name in ("core.update_inventory", "core.compare_inventory", "core.build_sku_cache"):
         if name in sys.modules:
             importlib.reload(sys.modules[name])
     if "webapp.history" in sys.modules:
@@ -42,14 +42,14 @@ def isolated_data_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def cfg():
-    from config import load_config
+    from core.config import load_config
     return load_config()
 
 
 @pytest.fixture
 def sample_cache(tmp_path):
     """Write a sku_cache.json with a known SKU map."""
-    from config import SKU_CACHE_FILE
+    from core.config import SKU_CACHE_FILE
     cache = {
         "skus": {
             "sku-a": {

@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import DATA_DIR
+from core.config import DATA_DIR
 
 from . import history
 from .routes import api as api_routes

@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def _require(name: str) -> str:
+    val = os.environ.get(name, "").strip()
+    if not val or val.startswith("REPLACE_ME") or val.startswith("your-store"):
+        raise RuntimeError(
+            f"Missing or placeholder value for {name} in .env. "
+            f"Copy .env.example to .env and fill in real values."
+        )
+    return val
+
+
+@dataclass(frozen=True)
+class Config:
+    store_domain: str
+    access_token: str
+    api_version: str
+    location_id: str
+    qty_mode: str  # "absolute" or "delta"
+    sku_column: str
+    qty_column: str
+    title_column: str
+    price_column: str
+    dry_run: bool
+
+    @property
+    def graphql_url(self) -> str:
+        return f"https://{self.store_domain}/admin/api/{self.api_version}/graphql.json"
+
+
+def load_config() -> Config:
+    qty_mode = os.environ.get("QTY_MODE", "absolute").strip().lower()
+    if qty_mode not in {"absolute", "delta"}:
+        raise RuntimeError(f"QTY_MODE must be 'absolute' or 'delta', got: {qty_mode!r}")
+
+    raw_loc = os.environ.get("SHOPIFY_LOCATION_ID", "").strip()
+    location_id = "" if "REPLACE_ME" in raw_loc or not raw_loc else raw_loc
+
+    return Config(
+        store_domain=_require("SHOPIFY_STORE_DOMAIN"),
+        access_token=_require("SHOPIFY_ACCESS_TOKEN"),
+        api_version=os.environ.get("SHOPIFY_API_VERSION", "2026-10").strip(),
+        location_id=location_id,
+        qty_mode=qty_mode,
+        sku_column=os.environ.get("EXCEL_SKU_COLUMN", "SKU").strip(),
+        qty_column=os.environ.get("EXCEL_QTY_COLUMN", "Quantity").strip(),
+        title_column=os.environ.get("EXCEL_TITLE_COLUMN", "Title").strip(),
+        price_column=os.environ.get("EXCEL_PRICE_COLUMN", "Price").strip(),
+        dry_run=os.environ.get("DRY_RUN", "true").strip().lower() in {"1", "true", "yes"},
+    )
+
+
+_data_dir_env = os.environ.get("DATA_DIR", "").strip()
+DATA_DIR = Path(_data_dir_env).resolve() if _data_dir_env else PROJECT_ROOT
+
+INPUT_DIR = DATA_DIR / "input"
+ARCHIVE_DIR = DATA_DIR / "archive"
+LOGS_DIR = DATA_DIR / "logs"
+SKU_CACHE_FILE = DATA_DIR / "sku_cache.json"
+
+UPLOADS_DIR = DATA_DIR / "uploads"
+RUNS_DIR = DATA_DIR / "runs"
+HISTORY_DB = DATA_DIR / "history.sqlite"
+
+# Confirm-dialog friction thresholds. When either is exceeded, the UI
+# requires the user to type PUSH before the Shopify update runs.
+#   Big OOS:    >20% of matched products going to 0 stock
+#   Big price:  any price change by more than 30%
+# Exposed via /api/dev/flags so the frontend reads the same source of truth.
+CONFIRM_BIG_OOS_PCT = 0.20
+CONFIRM_BIG_PRICE_JUMP_PCT = 0.30

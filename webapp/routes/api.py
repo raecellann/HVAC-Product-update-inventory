@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from config import (
+from core.config import (
     CONFIRM_BIG_OOS_PCT,
     CONFIRM_BIG_PRICE_JUMP_PCT,
     RUNS_DIR,

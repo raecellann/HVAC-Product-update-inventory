@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import load_config
-from shopify_client import ShopifyClient
+from core.config import load_config
+from core.shopify_client import ShopifyClient
 
 TEST_SKUS = [
     ("952-2210-932", Decimal("1486.49"), Decimal("1345.99")),

@@ -1,7 +1,7 @@
 """Shared dependencies: config, job runner."""
 from __future__ import annotations
 
-from config import Config, load_config
+from core.config import Config, load_config
 
 from .jobs import JobRunner
 

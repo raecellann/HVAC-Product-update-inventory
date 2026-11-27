@@ -30,7 +30,7 @@ def _matched(n):
 
 
 def test_push_batches_absolute(cfg):
-    from update_inventory import push_batches
+    from core.update_inventory import push_batches
     from tests.conftest import FakeShopifyClient
 
     client = FakeShopifyClient().respond_to("inventorySetQuantities", _absolute_resp())
@@ -46,7 +46,7 @@ def test_push_batches_absolute(cfg):
 
 
 def test_push_batches_delta_mode(cfg):
-    from update_inventory import push_batches
+    from core.update_inventory import push_batches
     from tests.conftest import FakeShopifyClient
 
     cfg2 = dataclasses.replace(cfg, qty_mode="delta")
@@ -57,7 +57,7 @@ def test_push_batches_delta_mode(cfg):
 
 
 def test_push_batches_records_user_errors(cfg):
-    from update_inventory import push_batches
+    from core.update_inventory import push_batches
     from tests.conftest import FakeShopifyClient
 
     err = {"field": ["x"], "code": "INVALID", "message": "nope"}

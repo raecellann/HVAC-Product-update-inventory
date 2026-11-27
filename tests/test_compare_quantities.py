@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 def test_compare_quantities_three_states(sample_cache):
-    from compare_inventory import compare_quantities
+    from core.compare_inventory import compare_quantities
 
     excel = {"sku-a": 10, "sku-b": 5, "sku-gone": 1}
     sku_map = sample_cache["skus"]

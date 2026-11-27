@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from config import HISTORY_DB, RUNS_DIR
+from core.config import HISTORY_DB, RUNS_DIR
 
 DETAIL_RETENTION_DAYS = 90
 

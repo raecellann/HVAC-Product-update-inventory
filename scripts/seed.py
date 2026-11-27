@@ -22,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-from config import DATA_DIR, RUNS_DIR, SKU_CACHE_FILE
+from core.config import DATA_DIR, RUNS_DIR, SKU_CACHE_FILE
 from webapp import history
 
 
@@ -155,7 +155,7 @@ def seed_runs(cache) -> None:
 def _backdate_run(run_id: int, when: datetime) -> None:
     """history.create_run stamps `now` — override for seeded demo data."""
     import sqlite3
-    from config import HISTORY_DB
+    from core.config import HISTORY_DB
     con = sqlite3.connect(HISTORY_DB, isolation_level=None)
     con.execute("UPDATE runs SET created_at=? WHERE id=?", (iso(when), run_id))
     con.close()
